@@ -1,6 +1,6 @@
-# Cloudflare 静态托管
+# Cloudflare 托管
 
-RouteKit 只需要托管 `dist/` 中的静态文件，不需要 Worker 业务代码、数据库、API Key 或用户配置存储。以下是部署操作说明；仓库中的配置文件不代表已有线上部署。
+推荐使用 Workers 托管前端与 `GET /api/connection`：接口仅返回当前请求的 Cloudflare IP / 地区元数据，不接受查询目标、订阅 URL 或配置，不需要数据库、API Key 或用户配置存储。纯静态 Pages 可使用配置、订阅整理和外部测速；当前 IP 接口需另外实现。
 
 ## 准备生产文件
 
@@ -15,7 +15,7 @@ npm run check
 
 ## 方式一：Workers 静态资源
 
-仓库中的 `wrangler.jsonc` 将 `assets.directory` 指向 `./dist`，无需 `main` 入口；未知页面导航由 SPA 回退处理。[Cloudflare 静态资源配置](https://developers.cloudflare.com/workers/static-assets/binding/)、[SPA 路由](https://developers.cloudflare.com/workers/static-assets/routing/single-page-application/)
+仓库中的 `wrangler.jsonc` 将 `assets.directory` 指向 `./dist`，`main` 指向 `src/worker.ts`，`run_worker_first: ["/api/*"]` 将 API 交给 Worker；其他静态资源与页面导航由资源服务处理。[Cloudflare 静态资源配置](https://developers.cloudflare.com/workers/static-assets/binding/)、[SPA 路由](https://developers.cloudflare.com/workers/static-assets/routing/single-page-application/)
 
 先修改 `wrangler.jsonc` 的 `name` 为自己的项目名称。预览托管行为：
 
@@ -30,7 +30,7 @@ npx wrangler login
 npm run deploy
 ```
 
-`deploy` 会先构建，再上传静态文件。以命令输出中的地址和 Cloudflare 控制台部署记录为准。[Cloudflare 静态站点部署](https://developers.cloudflare.com/workers/static-assets/get-started/)
+`deploy` 会先构建，再打包 Worker 并上传前端静态文件。以命令输出中的地址和 Cloudflare 控制台部署记录为准。[Cloudflare 静态站点部署](https://developers.cloudflare.com/workers/static-assets/get-started/)
 
 也可在 Cloudflare Workers 中连接自己的 GitHub 仓库，使用以下构建设置：
 
@@ -60,9 +60,11 @@ Pages 使用这些构建设置；`wrangler.jsonc` 是 Workers 部署配置，不
 
 ## 响应头与发布验收
 
-`public/_headers` 设置了内容安全策略、防嵌入、防 MIME 嗅探及无来源引用头。脚本只从同源加载，`connect-src 'none'` 禁止页面脚本发起 Fetch / XHR / WebSocket 等连接；配置仍可通过浏览器生成并下载。内联 SVG 图标不受影响。
+`public/_headers` 设置了内容安全策略、防嵌入、防 MIME 嗅探及无来源引用头。脚本只从同源加载；为支持用户自定义的订阅地址，`connect-src 'self' https:` 允许同源和 HTTPS 连接，具体请求由界面操作触发。CSP 本身并未把 HTTPS 限定到几个服务商。当前应用请求自己的 IP 接口、用户指定的订阅源和 Cloudflare Speed，本站不提供订阅转发接口。内联 SVG 图标不受影响。
 
-这些响应头由 Cloudflare 静态资源服务应用。Vite 的 `dev` / `preview` 不会自动模拟 `_headers`；若以后加入 Worker 响应或 SSR，也需在相应响应中自行设置。[Workers 自定义响应头](https://developers.cloudflare.com/workers/static-assets/headers/)
+跨域能否读取订阅及其用量头仍由目标站点的 CORS 控制。读取 `Subscription-Userinfo` 还需服务商使用 `Access-Control-Expose-Headers` 暴露该头；订阅下载成功不代表浏览器能读到用量，缺失时不能当作零额度。[MDN 响应头暴露说明](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Access-Control-Expose-Headers)
+
+`_headers` 由 Cloudflare 静态资源服务应用，Vite 的 `dev` / `preview` 不会自动模拟它。现有 `/api/connection` JSON 响应在 `src/worker.ts` 中另设 `no-store`、内容类型、防嗅探与无来源引用头；增加 Worker 响应或 SSR 时也需在对应响应中自行设置适用的响应头。[Workers 自定义响应头](https://developers.cloudflare.com/workers/static-assets/headers/)
 
 发布后用真实站点地址检查：
 
@@ -72,12 +74,14 @@ curl -I https://your-project.your-subdomain.workers.dev/
 
 确认响应中有 `Content-Security-Policy`、`X-Frame-Options: DENY`、`X-Content-Type-Options: nosniff` 和 `Referrer-Policy: no-referrer`，再在浏览器完成应用选择、显式保存并重新打开本地方案、导出和备份导入。检查控制台没有阻止正常功能的 CSP 错误；下载的配置需另行在目标客户端验收。
 
+Workers 部署还应验证 `/api/connection` 返回 JSON、`Cache-Control: no-store` 和真实请求来源信息。IP 只代表访问本站时观测到的地址，不能证明到其他目标的出口一致；使用域名分流时，Cloudflare Speed 测量可能走另一条路径。网页上不同按钮的结果也可能来自不同采集时间。
+
 不要给此站点启用注入脚本的 Web Analytics、Zaraz 或其他第三方统计，除非有意改变其隐私范围并更新代码、CSP 和说明。本站不依赖这些功能。
 
 ## GitHub 开源发布
 
 在自己的 GitHub 账号创建公开仓库，提交源码、锁文件、文档和 MIT 许可证。不要上传 `node_modules/`、`.env`、导出的私人配置或认证信息。项目的 `.gitignore` 已忽略常见本地产物。
 
-仓库公开后，可设置构建环境变量 `VITE_REPOSITORY_URL=https://github.com/你的账号/你的仓库` 并重新构建，让页头显示真实的 GitHub 链接。未设置时显示“开源说明”。这是公开链接，不能填写访问令牌或带凭证的 URL。
+仓库公开后，可设置构建环境变量 `VITE_REPOSITORY_URL=https://github.com/你的账号/你的仓库` 并重新构建，让页头显示真实的 GitHub 链接。未设置时使用本项目的公开 GitHub 地址；分叉部署建议覆盖为自己的仓库。这是公开链接，不能填写访问令牌或带凭证的 URL。
 
-`.github/workflows/ci.yml` 在推送与 Pull Request 时运行类型检查、单元测试、构建和 Chromium 浏览器测试，使用只读仓库权限且不部署。发布是否成功以远端仓库、Actions 运行和 Cloudflare 部署记录为准。
+`.github/workflows/ci.yml` 在推送与 Pull Request 时运行类型检查、单元测试、Python 检测器测试、构建和 Chromium 浏览器测试，使用只读仓库权限且不部署。发布是否成功以远端仓库、Actions 运行和 Cloudflare 部署记录为准。

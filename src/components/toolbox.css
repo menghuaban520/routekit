@@ -1,0 +1,320 @@
+[hidden] {
+  display: none !important;
+}
+.workspace-navigation {
+  display: flex;
+  gap: 7px;
+  border-bottom: 1px solid var(--line);
+  margin: 0 0 24px;
+  overflow-x: auto;
+}
+.workspace-navigation button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 14px 19px;
+  white-space: nowrap;
+  border-bottom: 3px solid transparent;
+  color: var(--muted);
+  font-weight: 600;
+}
+.workspace-navigation button[aria-current="page"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.workspace-navigation button:hover {
+  background: var(--tint);
+}
+.network-home {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 30px;
+}
+.tool-section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+}
+.tool-section-heading h2 {
+  font-size: 19px;
+  letter-spacing: -0.4px;
+  margin-bottom: 8px;
+}
+.tool-section-heading p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.8;
+}
+.local-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 11px;
+  background: var(--tint);
+  color: var(--accent);
+  border-radius: 20px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.metric-strip {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr 1fr 1fr;
+  margin: 30px 0 25px;
+  padding: 25px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.metric-strip > div {
+  min-width: 0;
+  padding: 0 24px;
+  border-left: 1px solid var(--line);
+}
+.metric-strip > div:first-child {
+  padding-left: 0;
+  border: 0;
+}
+.metric-strip > div:last-child {
+  padding-right: 0;
+}
+.metric-strip span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.metric-strip strong {
+  display: block;
+  font-size: 31px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -1px;
+  margin: 15px 0 8px;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.metric-strip strong.ip-metric {
+  font-size: 24px;
+  letter-spacing: -0.5px;
+}
+.metric-strip strong.text-metric {
+  font-size: 20px;
+  letter-spacing: -0.4px;
+}
+.metric-strip em {
+  font-size: 13px;
+  font-style: normal;
+  letter-spacing: 0;
+  color: var(--muted);
+  font-weight: 400;
+}
+.metric-strip small {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.network-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.network-actions .button {
+  gap: 7px;
+}
+.stop-button {
+  color: #b34742;
+}
+.measurement-progress {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+  margin-top: 18px;
+  color: var(--accent);
+}
+.measurement-progress progress {
+  width: 180px;
+  accent-color: var(--accent);
+}
+.spin {
+  animation: rk-spin 1s linear infinite;
+}
+@keyframes rk-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.tool-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 13px;
+  background: #fff7e8;
+  border: 1px solid #f0dfbb;
+  border-radius: 8px;
+  color: #795724;
+  line-height: 1.75;
+  margin: 16px 0;
+  font-size: 13px;
+}
+.tool-alert > svg,
+.tool-footnote > svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.connection-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 30px;
+  background: #f7f9fb;
+  border-radius: 9px;
+  padding: 20px;
+  margin: 22px 0 0;
+}
+.connection-details dt {
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 7px;
+}
+.connection-details dd {
+  font-size: 13px;
+  margin: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+.tool-footnote {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.85;
+  margin-top: 19px;
+  max-width: 960px;
+}
+.tool-divider {
+  height: 1px;
+  background: var(--line);
+  margin: 30px 0;
+}
+.external-tools {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 22px;
+}
+.external-tools > a {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.external-tools > a:hover {
+  border-color: var(--accent);
+  background: #fafdfc;
+}
+.external-tools > a > svg:first-child {
+  color: var(--accent);
+  width: 21px;
+  flex-shrink: 0;
+}
+.external-tools > a > svg:last-child {
+  width: 17px;
+  height: 17px;
+  margin-left: auto;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.external-tools strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+.external-tools p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 7px 0;
+}
+.external-tools small {
+  color: #6b7a8d;
+  font-size: 10px;
+}
+@media (max-width: 900px) {
+  .network-home {
+    padding: 23px;
+  }
+  .metric-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 24px 0;
+  }
+  .metric-strip > div:nth-child(3) {
+    padding-left: 0;
+    border: 0;
+  }
+}
+@media (max-width: 600px) {
+  .workspace-navigation {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    overflow: visible;
+    gap: 0;
+    margin-bottom: 17px;
+  }
+  .workspace-navigation button {
+    gap: 4px;
+    padding: 13px 3px;
+    font-size: 11px;
+  }
+  .workspace-navigation svg {
+    width: 14px;
+  }
+  .network-home {
+    padding: 20px 17px;
+  }
+  .tool-section-heading h2 {
+    font-size: 17px;
+  }
+  .tool-section-heading .local-pill {
+    display: none;
+  }
+  .metric-strip > div {
+    padding: 0 13px;
+  }
+  .metric-strip strong {
+    font-size: 27px;
+  }
+  .metric-strip strong.ip-metric {
+    font-size: 20px;
+  }
+  .metric-strip strong.text-metric {
+    font-size: 17px;
+  }
+  .network-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .external-tools {
+    grid-template-columns: 1fr;
+  }
+  .connection-details {
+    grid-template-columns: 1fr;
+  }
+  .tool-divider {
+    margin: 25px 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}

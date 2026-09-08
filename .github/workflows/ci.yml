@@ -25,5 +25,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - run: python3 -m unittest discover -s tests/python
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e

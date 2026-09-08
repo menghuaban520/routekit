@@ -28,7 +28,7 @@ async function expectNoPageOverflow(page: Page) {
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/?view=config");
   await expect(
     page.getByRole("heading", { name: "让每个应用，走对的路。" }),
   ).toBeVisible();
@@ -133,7 +133,7 @@ test("deleting from an older local-schemes dialog preserves another tab’s new 
   await page.getByRole("button", { name: "本地方案", exact: true }).click();
 
   const secondPage = await context.newPage();
-  await secondPage.goto("/");
+  await secondPage.goto("/?view=config");
   await secondPage
     .getByRole("textbox", { name: "方案名称", exact: true })
     .fill("另一个标签的新方案");

@@ -9,6 +9,8 @@ dist/
 *.local
 *.log
 *.tsbuildinfo
+__pycache__/
+*.py[cod]
 .DS_Store
 coverage/
 playwright-report/
