@@ -1,0 +1,24 @@
+node_modules/
+dist/
+.wrangler/
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+*.local
+*.log
+*.tsbuildinfo
+.DS_Store
+coverage/
+playwright-report/
+test-results/
+blob-report/
+
+# Exported personal configurations; keep test fixtures in their own directory.
+/*.conf
+/routekit-*.json
+
+# Keep static assets even when a workstation globally ignores Public/.
+!public/
+!public/**
