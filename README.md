@@ -1,8 +1,8 @@
-# RouteKit 网络工具箱
+# RouteKit 网络观测台
 
 [在线使用](https://routekit.menghuaban520.workers.dev) · [GitHub 源码](https://github.com/menghuaban520/routekit)
 
-面向 Shadowrocket 用户的开源网络工具箱：网络概览、订阅与节点、分流配置、批量规则检查。支持新手界面与高级编辑，生成可下载的 `.conf`。
+面向 Shadowrocket 用户的开源网络工具箱：网络概览、订阅与节点、分流配置、批量规则检查。支持新手界面与高级编辑，生成可下载的 `.conf`。深色界面以 IP、实时吞吐曲线和延迟采样为中心，长说明默认折叠。
 
 React + TypeScript + Vite，搭配一个只返回当前请求 IP 信息的 Cloudflare Worker。MIT 开源；推荐 Workers 部署，纯静态 Pages 也可使用配置与订阅整理功能。
 
@@ -10,7 +10,7 @@ React + TypeScript + Vite，搭配一个只返回当前请求 IP 信息的 Cloud
 
 ## 能做什么
 
-- 网络概览：按需查看当前浏览器出口 IP、粗略位置、ASN，执行三次 HTTPS 延迟检查与 5 MB 下载测速。
+- 网络概览：按需查看当前浏览器出口 IP、粗略位置、ASN，执行三次 HTTPS 延迟检查与 5 MB 下载测速。提供一次探测、实时接收进度与采样曲线、事件记录和 IP 复制；可随时停止，重新开始时清除上一次未完成样本。
 - DNS 与暴露检查：整合 DNSLeakTest、BrowserLeaks DNS / WebRTC 和 Test IPv6 的真实测试入口；结果在外部服务显示。
 - 订阅整理：直接从支持 CORS 的 HTTPS 订阅地址读取，或粘贴、导入文件；支持常见节点 URI 与 Base64 列表、去重、搜索、筛选和导出。
 - 订阅用量：读取可见的 `Subscription-Userinfo` 响应头，显示上传、下载、已用、额度、剩余与到期时间；缺失字段显示未知。支持手动导入订阅商提供的头信息，标明数据来源。

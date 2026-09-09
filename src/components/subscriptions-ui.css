@@ -1,5 +1,6 @@
 .subscriptions-panel {
   min-width: 0;
+  color: var(--text);
 }
 .subscriptions-heading {
   display: flex;
@@ -16,14 +17,11 @@
   align-items: center;
   gap: 6px;
   color: var(--accent);
-  background: var(--tint);
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
   border-radius: 20px;
   padding: 7px 11px;
   font-size: 12px;
   white-space: nowrap;
-}
-.subscriptions-privacy {
-  margin: 20px 0;
 }
 .subscriptions-import,
 .subscriptions-library,
@@ -31,7 +29,7 @@
 .subscriptions-usage {
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: #fff;
+  background: var(--panel);
   padding: 24px;
   margin-top: 22px;
 }
@@ -63,7 +61,7 @@
   border: 1px solid var(--line);
   border-radius: 7px;
   padding: 3px;
-  background: #f7f9fb;
+  background: var(--surface);
 }
 .subscriptions-mode button {
   padding: 7px 11px;
@@ -71,9 +69,9 @@
   font-size: 12px;
 }
 .subscriptions-mode button.active {
-  color: var(--accent-dark);
-  background: #fff;
-  box-shadow: 0 1px 3px #14243b12;
+  color: var(--accent);
+  background: var(--panel);
+  box-shadow: 0 1px 3px transparent;
   font-weight: 600;
 }
 .subscriptions-panel .helper {
@@ -95,6 +93,16 @@
 .subscriptions-field select {
   width: 100%;
   font-weight: 400;
+}
+.subscriptions-panel input:not([type="checkbox"]),
+.subscriptions-panel select,
+.subscriptions-panel textarea {
+  color: var(--text);
+  border-color: var(--line);
+  background: var(--surface);
+}
+.subscriptions-import > .subscriptions-field + .subscriptions-field {
+  margin-top: 16px;
 }
 .subscriptions-field > span {
   display: inline-flex;
@@ -161,17 +169,17 @@
 .subscriptions-notice {
   padding: 16px 20px;
   margin-top: 20px;
-  border: 1px solid #cde2db;
-  background: #f5faf7;
-  color: #285b4b;
+  border: 1px solid #285549;
+  background: #112b24;
+  color: #a4ead0;
   border-radius: 8px;
   font-size: 12px;
   overflow-wrap: anywhere;
 }
 .subscriptions-notice.has-errors {
-  border-color: #ead5b5;
-  color: #7d5a26;
-  background: #fffcf6;
+  border-color: #655030;
+  color: #efc57b;
+  background: #2e2519;
 }
 .subscriptions-notice strong {
   display: block;
@@ -259,11 +267,11 @@
   color: var(--muted);
 }
 .subscriptions-empty > svg {
-  color: #8aa69f;
+  color: var(--muted);
 }
 .subscriptions-empty h3 {
   font-size: 15px;
-  color: #40566a;
+  color: var(--text);
 }
 .subscriptions-empty p {
   font-size: 12px;
@@ -285,7 +293,7 @@
   font-weight: 550;
   color: var(--muted);
   padding: 12px 13px;
-  background: #f7f9fb;
+  background: var(--surface);
   white-space: nowrap;
 }
 .subscriptions-table td {
@@ -343,8 +351,8 @@
 }
 .subscriptions-protocol {
   display: inline-block;
-  border: 1px solid #e0e6ed;
-  color: #596c80;
+  border: 1px solid var(--line);
+  color: var(--muted);
   font-size: 9px;
   border-radius: 3px;
   padding: 0 5px;
@@ -359,30 +367,30 @@
   padding: 2px 7px;
 }
 .subscriptions-status.pending {
-  background: #f0f3f5;
-  color: #687484;
+  background: var(--surface);
+  color: var(--muted);
 }
 .subscriptions-status.ok {
-  background: #eaf6ef;
-  color: #26734b;
+  background: #112b24;
+  color: #8ce2b6;
 }
 .subscriptions-status.error {
-  background: #fff2e9;
-  color: #9b642b;
+  background: #2e2519;
+  color: #efc57b;
 }
 .subscriptions-unmeasured {
   font-size: 11px;
-  color: #7b8694;
+  color: var(--muted);
 }
 .subscriptions-ip-type {
   display: inline-block;
   font-size: 10px;
-  color: #6b7888;
+  color: var(--muted);
   margin-top: 5px;
 }
 .subscriptions-row-error {
   font-size: 10px;
-  color: #9b642b;
+  color: #efc57b;
   margin-top: 6px;
   overflow-wrap: anywhere;
 }
@@ -392,7 +400,7 @@
   margin-top: 7px;
 }
 .subscriptions-danger {
-  color: #ae4b4b;
+  color: #ff9b99;
 }
 .subscriptions-probe .subscriptions-card-heading {
   align-items: flex-start;
@@ -409,7 +417,7 @@
   display: grid;
   grid-template-columns: 1.3fr 1fr;
   gap: 25px;
-  background: #f7f9fb;
+  background: var(--surface);
   border-radius: 8px;
   padding: 18px;
   margin-bottom: 24px;
@@ -469,7 +477,7 @@
   border-radius: 50%;
   width: 22px;
   height: 22px;
-  background: var(--tint);
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
   color: var(--accent);
   font-size: 11px;
   font-weight: 600;
@@ -491,7 +499,7 @@
 .subscriptions-command {
   display: flex;
   align-items: flex-start;
-  background: #f1f4f7;
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 7px;
   padding: 10px;
@@ -501,33 +509,23 @@
   font-size: 10px;
   line-height: 1.65;
   overflow-wrap: anywhere;
-  color: #405369;
+  color: var(--text);
 }
 .subscriptions-command button {
   flex-shrink: 0;
-}
-.subscriptions-footnote {
-  display: flex;
-  gap: 7px;
-  align-items: flex-start;
-  font-size: 11px;
-  color: var(--muted);
-  margin-top: 24px;
-  padding-top: 17px;
-  border-top: 1px solid var(--line);
 }
 .subscriptions-inline-warning {
   display: block;
   font-size: 11px;
   line-height: 1.7;
-  color: #94622d;
+  color: #efc57b;
   margin-bottom: 12px;
 }
 .subscriptions-message {
   display: flex;
   gap: 7px;
   align-items: flex-start;
-  color: var(--accent-dark);
+  color: var(--accent);
   font-size: 12px;
   margin-top: 18px;
 }
@@ -546,9 +544,13 @@
   margin-bottom: 7px;
 }
 .subscriptions-usage-metrics strong {
-  font-size: 19px;
+  font-size: 25px;
+  color: var(--text);
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
+}
+.subscriptions-usage-metrics > div:nth-child(3) strong {
+  color: var(--accent);
 }
 .subscriptions-usage-expiry strong {
   font-size: 12px;
@@ -575,11 +577,11 @@
   height: 7px;
   border: 0;
   border-radius: 9px;
-  background: #e7eeed;
+  background: var(--line);
   overflow: hidden;
 }
 .subscriptions-usage-progress progress::-webkit-progress-bar {
-  background: #e7eeed;
+  background: var(--line);
   border-radius: 9px;
 }
 .subscriptions-usage-progress progress::-webkit-progress-value {
@@ -601,7 +603,7 @@
 }
 .subscriptions-usage-notes {
   font-size: 11px;
-  color: #846130;
+  color: #efc57b;
   margin-top: 12px;
 }
 .subscriptions-usage-notes summary,
@@ -633,11 +635,11 @@
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  border: 1px dashed #cddbd8;
+  border: 1px dashed var(--line);
   border-radius: 8px;
   margin-top: 23px;
   padding: 15px;
-  background: #fbfcfc;
+  background: var(--surface);
 }
 .subscriptions-restore strong {
   font-size: 12px;
@@ -651,6 +653,32 @@
   flex-shrink: 0;
   font-size: 11px;
 }
+.subscriptions-help {
+  border-top: 1px solid var(--line);
+  margin-top: 24px;
+  padding-top: 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.subscriptions-help > summary {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--muted);
+  list-style: none;
+}
+.subscriptions-help > summary::after { content: "+"; margin-left: 4px; }
+.subscriptions-help[open] > summary::after { content: "−"; }
+.subscriptions-help > summary::-webkit-details-marker { display: none; }
+.subscriptions-help > div {
+  max-width: 850px;
+  padding-top: 4px;
+  line-height: 1.8;
+}
+.subscriptions-help h3 { font-size: 12px; color: var(--text); margin: 15px 0 5px; }
+.subscriptions-help p { margin: 0 0 8px; }
 .subscriptions-spin {
   animation: subscriptions-spin 1s linear infinite;
 }

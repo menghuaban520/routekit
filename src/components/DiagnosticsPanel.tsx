@@ -54,15 +54,15 @@ export default function DiagnosticsPanel({ profile }: { profile: Profile }) {
   return (
     <section className="diagnostics-panel" aria-label="批量分流检查">
       <div className="section-heading">
-        <h2>这些地址，会走哪条规则？</h2>
-        <p>按当前导出的规则逐行检查，不发起 DNS、定位或测速请求。</p>
+        <h2>批量分流检查</h2>
+        <p>粘贴目标，查看命中的规则。</p>
       </div>
       <div className="form-stack">
         <label htmlFor="diagnostics-input">
           域名或 IP，每行一个
           <textarea
             id="diagnostics-input"
-            rows={7}
+            rows={6}
             value={input}
             onChange={(event) => setInput(event.target.value)}
             spellCheck={false}
@@ -75,9 +75,7 @@ export default function DiagnosticsPanel({ profile }: { profile: Profile }) {
           />
         </label>
         <p className="helper" id="diagnostics-format">
-          最多 {MAX_DIAGNOSTIC_LINES} 行。可填 IPv4 /
-          IPv6，或“域名,解析IP,国家代码”“IP,国家代码”；国家代码如
-          CN、US，均视为你手动提供的提示。使用英文逗号。
+          域名、IP 或“域名,解析IP,CN”。英文逗号，地区按手动提示处理。
         </p>
       </div>
       <div className="diagnostics-actions">
@@ -89,15 +87,6 @@ export default function DiagnosticsPanel({ profile }: { profile: Profile }) {
           {input ? input.split(/\r?\n/).length : 0} / {MAX_DIAGNOSTIC_LINES} 行
         </span>
       </div>
-      <div className="note diagnostics-note">
-        <Info size={17} />
-        <div>
-          这里匹配的是访问目标，不是代理节点的出口 IP。缺少 IP
-          或地区且会影响策略时会显示待确认；手动地区可能与客户端 GeoIP
-          数据库不同。未填解析 IP 时，带 no-resolve 的规则不会主动查询 DNS。
-        </div>
-      </div>
-
       {stale && (
         <p className="diagnostics-stale" role="status">
           配置或输入已修改，下面是上次结果。请重新检查后复制或下载。
@@ -198,24 +187,34 @@ export default function DiagnosticsPanel({ profile }: { profile: Profile }) {
                       {result.candidateRule && (
                         <code>候选：{result.candidateRule}</code>
                       )}
-                      <p>{result.reason}</p>
-                      {result.warnings.map((warning) => (
-                        <small key={warning}>{warning}</small>
-                      ))}
+                      {result.status === "matched" ? (
+                        <details className="diagnostics-row-details">
+                          <summary>判断说明{result.warnings.length ? ` · ${result.warnings.length} 条提示` : ""}</summary>
+                          <p>{result.reason}</p>
+                          {result.warnings.map((warning) => <small key={warning}>{warning}</small>)}
+                        </details>
+                      ) : (
+                        <>
+                          <p>{result.reason}</p>
+                          {result.warnings.map((warning) => <small key={warning}>{warning}</small>)}
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <p className="helper diagnostics-limits">
-            结果只说明这些输入在当前规则中的匹配情况，不代表实际连接成功；DNS
-            缓存、Hosts 是否被客户端采用、系统绕过及客户端 GeoIP
-            数据库都可能影响实测结果。需要复现实际访问时，请填写设备当时使用的解析
-            IP。
-          </p>
         </div>
       )}
+      <details className="diagnostics-help">
+        <summary><Info size={15} />使用说明</summary>
+        <div>
+          <p>每行输入一个域名、IPv4 或 IPv6，最多 {MAX_DIAGNOSTIC_LINES} 行。也可使用“域名,解析IP,国家代码”或“IP,国家代码”，以英文逗号分隔；CN、US 等地区代码均为手动提示。</p>
+          <p>按当前导出的规则顺序匹配访问目标，不发起 DNS、定位或测速请求，也不把节点入口 IP 当作出口。缺少 IP 或地区且会影响策略时，结果显示待确认；未填解析 IP 时，no-resolve 规则不会主动查询 DNS。</p>
+          <p>匹配不代表实际连接成功。手动地区可能与客户端 GeoIP 数据库不同，DNS 缓存、Hosts 是否被采用和系统绕过也会影响实测。需要复现实际访问时，请填写设备当时使用的解析 IP。</p>
+        </div>
+      </details>
       {message && (
         <p className="diagnostics-message" role="status">
           {message}

@@ -1,39 +1,41 @@
-# v0.2.0 验证记录
+# v0.3.0 验证记录
 
-验证日期：2026-09-08。下列为实际执行的验证范围，不能替代用户网络和目标客户端验收。
+本轮验证日期：2026-09-09。下列区分本轮验证与历史证据，不能替代用户网络和目标客户端验收。v0.3 本地验收及 Cloudflare 线上复验已完成。
 
 ## 代码与浏览器
 
 - Node 24，`npm run check`：TypeScript、229 项单元测试、Vite 生产构建通过。
-- `npm run test:e2e -- --workers=3`：17 项 Chromium 回归通过。
+- `npm run test:e2e -- --workers=3`：19 项 Chromium 回归通过。
 - 浏览器回归读取实际下载文件：Shadowrocket `.conf` 的文件名与规则、配置 JSON 备份往返、本地方案恢复、订阅 URI 导出、检测任务与结果关联、刷新后由原任务恢复节点 ID、CSV 下载。
 - 覆盖订阅头用量、上传、下载、剩余、缺失字段未知和手动来源标记；有效部分结果按延迟/速度排序，未测值排后；筛选去重、无效替换保留已有节点。
 - 配置回归包含域名和章节注入、DNS 多行、无效 Hosts/CIDR/通用参数阻止导出、多标签方案删除不覆盖新保存、键盘操作、焦点恢复及 375px 窄屏。
-- 网络 UI 使用受控响应测试按需请求、503 故障、完整 5 MB 才显示速度，以及批量分流结果过期后禁止导出。受控响应不是外网实测证据。
-- 主线程另用 Codex 内置浏览器检查四区布局和交互，目视检查桌面与手机界面。375px 下四个一级入口均完整可见，节点结果表只在自身容器内横向滚动。
+- 网络 UI 使用受控响应测试按需请求、503 故障、完整 5 MB 才显示速度，以及批量分流结果过期后禁止导出。
+- 新增流式回归使用本地 HTTP 分块响应，保留浏览器的真实 `fetch`、`ReadableStream`、`AbortSignal` 和单调计时：收到字节后更新曲线与实时采样值，停止后连接关闭、尾随采样计时器不再更新，重启清除旧字节与样本，完整接收 5 MB 后才生成均值。该受控传输不是外网测速证据。
+- 新增减少动态效果回归：启用 `prefers-reduced-motion: reduce` 后运行中的展示动画为零，实际接收字节与曲线样本仍正常更新。
+- 独立只读审查核对了采样计时器清理、取消后的状态收尾、重启互斥和错误语义；未发现阻断发布的问题。另用浏览器检查 375、721、768、850、1024px 的下载完成态，下载区与页面无横向溢出。补充了窄屏下载计数自动换行，320px 页面检查无横向溢出。
 
-## 本地检测器实测
+## 本地检测器历史实测（v0.2）
 
-`python3 -m unittest discover -s tests/python`：25 项回归通过。另临时下载官方 Mihomo v1.19.30 并核对 SHA-256，8 类示例节点的真实 `-t` 校验通过。
+以下执行于 2026-09-08，属于 v0.2 历史证据。本轮未修改检测器，也未重跑 Python 或 Mihomo 实测。
+
+当时 `python3 -m unittest discover -s tests/python` 的 25 项回归通过。另临时下载官方 Mihomo v1.19.30 并核对 SHA-256，8 类示例节点的真实 `-t` 校验通过。
 
 两个本地认证 HTTP CONNECT 测试代理分别作为节点，由真实 Mihomo 内核串行切换；两节点的 HTTPS 延迟、出口 IP 和各 125,000 字节 Cloudflare 下载均成功。未使用私人订阅或节点，临时二进制、监听和结果已清理。详见[本地检测器说明](probe.md)。这验证检测链路，不能代表所有协议、传输参数和用户节点都可用。
 
 ## 视觉
 
-沿用初版工作台概念的白色面板、蓝灰背景、青绿色操作和简明文字层级，扩展为四个一级工作区。原双栏配置编辑器保留。未测量值显示未知，真实数据与来源说明分开。
+v0.3 改为深色网络观测台：突出 IP、下载吞吐量、HTTPS 延迟与探测记录，使用等宽数字和实测曲线。四个一级工作区及双栏配置编辑器保留，常驻说明减少，测量方法和配置提示收进可展开说明。未测量值显示未知；不会用随机数或循环动画模拟测量结果。
 
-[网络概览](preview.png)、[订阅工作台](preview-subscriptions.png)、[手机页面](preview-mobile.png)来自实际浏览器，无私人节点、IP 或用量数据。截图以界面结构为验收对象，不作为网络测量结果。
+[网络概览](preview.png)、[订阅工作台](preview-subscriptions.png)及[手机页面](preview-mobile.png)已更新为 v0.3 实际浏览器截图，无私人节点、IP 或用量数据。截图以界面结构为验收对象，不作为网络测量结果。桌面四个工作区与 375px 手机页面均无页面横向溢出，浏览器无运行时错误。
 
-## 发布
+## 发布与线上验证
 
-- GitHub 公开仓库：[menghuaban520/routekit](https://github.com/menghuaban520/routekit)。GitHub Actions 负责检查；部署目前为手动 Wrangler 发布。
+- GitHub 公开仓库：[menghuaban520/routekit](https://github.com/menghuaban520/routekit)。GitHub Actions 负责检查；部署目前为手动 Wrangler 发布。运行状态见 [Actions](https://github.com/menghuaban520/routekit/actions)。
 - 演示站：[routekit.menghuaban520.workers.dev](https://routekit.menghuaban520.workers.dev)。
-- v0.2 Worker 版本：`424b9774-ab6a-4e47-92e4-74ae9e427034`，包含静态资源与只读 IP 请求接口。
-- 初版 v0.1 版本为 `185a3481-f407-4114-abfa-4f2b6890f93a`；首版 GitHub Actions 已通过。v0.2 CI 状态见仓库的 [Actions](https://github.com/menghuaban520/routekit/actions)。
-
-- 上线后验证首页与本地构建逐字一致、CSP 启用同源和 HTTPS 请求、IP API 返回真实 Cloudflare 请求元数据且 `no-store`。实际下载的 `.conf` 含预期应用规则，本地检测器线上文件与源码逐字一致，浏览器无运行时错误。
-
-- 线上 Codex 内置浏览器实际完成 3 次 Cloudflare Speed HTTPS 请求与完整 5 MB 下载，页面显示完成状态及各自采集时间；未把该浏览器测量当成其他订阅节点的结果。
+- v0.3 Worker 版本：`41b2e7af-50a8-4971-8225-fe83f994aa7e`。v0.2 历史版本为 `424b9774-ab6a-4e47-92e4-74ae9e427034`。
+- 上线后读取的 HTML、JavaScript、CSS 与本地最终生产构建逐字一致。
+- IP API 返回真实 Cloudflare 请求数据且使用 `no-store`；线上本地检测器文件与源码逐字一致。
+- 线上 Codex 内置浏览器完成真实 IP 查询、3 次 HTTPS 延迟请求和完整 5,000,000 字节下载；下载产生 29 个实际采样点，均值约 6.92 Mbps，延迟均值约 323 ms。首次查询与延迟遇到临时请求失败，页面保留失败状态；分别重试后恢复，浏览器无运行时错误。这些数值只代表该次浏览器请求，不能当成其他订阅节点的测量结果。
 
 ## 能力边界
 

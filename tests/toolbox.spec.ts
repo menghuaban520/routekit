@@ -1,5 +1,79 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { createServer, type ServerResponse } from "node:http";
+import type { Page } from "@playwright/test";
+
+/** Test-only transport fixture. It emits actual HTTP chunks; the app still uses
+ * browser fetch, ReadableStream, AbortSignal and its own monotonic timestamps.
+ * These deterministic checks are not measurements of the public speed service. */
+async function streamingDownload(page: Page) {
+  const responses: ServerResponse[] = [];
+  const closed = new Set<number>();
+  const server = createServer((request, response) => {
+    if (request.method !== "GET" || !request.url?.startsWith("/__down?")) {
+      response.writeHead(404).end();
+      return;
+    }
+    const index = responses.length;
+    responses.push(response);
+    response.on("close", () => closed.add(index));
+    response.writeHead(200, {
+      "Content-Type": "application/octet-stream",
+      "Access-Control-Allow-Origin": "http://127.0.0.1:4178",
+      "Cache-Control": "no-store",
+      "Content-Length": "5000000",
+    });
+    response.flushHeaders();
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("No fixture port");
+  await page.addInitScript((origin) => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      const url = new URL(
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url,
+        location.href,
+      );
+      if (
+        url.origin === "https://speed.cloudflare.com" &&
+        url.pathname === "/__down"
+      ) {
+        return originalFetch(`${origin}${url.pathname}${url.search}`, init);
+      }
+      return originalFetch(input, init);
+    };
+  }, `http://127.0.0.1:${address.port}`);
+  return {
+    responses,
+    closed,
+    async emit(index: number, bytes: number, final = false) {
+      await expect.poll(() => responses.length).toBeGreaterThan(index);
+      // Separate real data windows so live-rate sampling can observe a change.
+      await new Promise((resolve) => setTimeout(resolve, 160));
+      if (final) responses[index].end(Buffer.alloc(bytes));
+      else responses[index].write(Buffer.alloc(bytes));
+    },
+    async dispose() {
+      for (const response of responses) response.destroy();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+async function sampleCount(page: Page) {
+  return Number(
+    await page.getByTestId("throughput-samples").getAttribute("data-sample-count"),
+  );
+}
 
 test("network overview only measures on request and reports real response failures", async ({
   page,
@@ -31,7 +105,7 @@ test("network overview only measures on request and reports real response failur
   });
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "你的网络，清楚一点。" }),
+    page.getByRole("heading", { name: "网络观测", exact: true }),
   ).toBeVisible();
   expect(ipRequests).toBe(0);
   expect(latencyRequests).toBe(0);
@@ -51,8 +125,8 @@ test("network overview only measures on request and reports real response failur
     .click();
   await expect(page.getByRole("alert")).toContainText("测速端点暂不可用");
   await expect(
-    page.locator(".metric-strip").getByText("—", { exact: false }).first(),
-  ).toBeVisible();
+    page.getByTestId("throughput-final"),
+  ).toHaveText("—");
   await expect(
     page.getByRole("link", { name: /DNS 泄漏测试/ }),
   ).toHaveAttribute("href", "https://www.dnsleaktest.com/");
@@ -135,5 +209,101 @@ test("all tool workspaces fit a phone", async ({ page }) => {
       viewport: document.documentElement.clientWidth,
     }));
     expect(width.content, name).toBeLessThanOrEqual(width.viewport + 1);
+  }
+});
+
+test("streamed measurements update from arriving bytes, stop cleanly and restart without stale samples", async ({
+  page,
+}) => {
+  const fixture = await streamingDownload(page);
+  try {
+    await page.goto("/");
+    expect(fixture.responses).toHaveLength(0);
+    const download = page.getByRole("button", {
+      name: "下载测速 · 5 MB",
+      exact: true,
+    });
+    const final = page.getByTestId("throughput-final");
+    const live = page.getByTestId("throughput-live");
+    const bytes = page.getByTestId("download-received");
+    const phase = page.getByTestId("network-phase");
+    await download.click();
+    await expect(phase).toHaveAttribute("data-phase", "speed");
+    await expect(download).toBeDisabled();
+    await expect(final).toHaveText("—");
+
+    await fixture.emit(0, 100_000);
+    await expect(bytes).toHaveAttribute("data-bytes", "100000");
+    await expect.poll(() => sampleCount(page)).toBeGreaterThan(0);
+    await expect.poll(async () => Number(await live.textContent())).toBeGreaterThan(0);
+    const firstCount = await sampleCount(page);
+    await fixture.emit(0, 250_000);
+    await expect(bytes).toHaveAttribute("data-bytes", "350000");
+    await expect.poll(() => sampleCount(page)).toBeGreaterThan(firstCount);
+    await expect(final).toHaveText("—");
+
+    await page.getByRole("button", { name: "停止检测", exact: true }).click();
+    await expect(phase).toHaveAttribute("data-phase", "idle");
+    await expect.poll(() => fixture.closed.has(0)).toBe(true);
+    await expect(live).toHaveText("—");
+    await expect(final).toHaveText("—");
+    const stoppedCount = await sampleCount(page);
+    expect(stoppedCount).toBeGreaterThan(0);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(await sampleCount(page)).toBe(stoppedCount);
+
+    await download.click();
+    await expect(phase).toHaveAttribute("data-phase", "speed");
+    await expect(bytes).toHaveAttribute("data-bytes", "0");
+    await expect(page.getByTestId("throughput-samples")).toHaveAttribute(
+      "data-sample-count",
+      "0",
+    );
+    await expect(final).toHaveText("—");
+    await expect(live).toHaveText("—");
+    await fixture.emit(1, 100_000);
+    await expect(bytes).toHaveAttribute("data-bytes", "100000");
+    await expect.poll(() => sampleCount(page)).toBeGreaterThan(0);
+    await fixture.emit(1, 4_900_000, true);
+    await expect(bytes).toHaveAttribute("data-bytes", "5000000");
+    await expect(phase).toHaveAttribute("data-phase", "idle");
+    await expect.poll(async () => Number(await final.textContent())).toBeGreaterThan(0);
+    expect(fixture.responses).toHaveLength(2);
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("reduced motion disables presentation animations while streamed data still updates", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const fixture = await streamingDownload(page);
+  try {
+    await page.goto("/");
+    expect(fixture.responses).toHaveLength(0);
+    await page
+      .getByRole("button", { name: "下载测速 · 5 MB", exact: true })
+      .click();
+    await fixture.emit(0, 100_000);
+    await expect(page.getByTestId("download-received")).toHaveAttribute(
+      "data-bytes",
+      "100000",
+    );
+    await expect.poll(() => sampleCount(page)).toBeGreaterThan(0);
+    const animations = await page.evaluate(() =>
+      document
+        .getAnimations()
+        .filter((animation) => animation.playState === "running").length,
+    );
+    expect(animations).toBe(0);
+    await expect(page.getByTestId("throughput-final")).toHaveText("—");
+    await page.getByRole("button", { name: "停止检测", exact: true }).click();
+    await expect(page.getByTestId("network-phase")).toHaveAttribute(
+      "data-phase",
+      "idle",
+    );
+  } finally {
+    await fixture.dispose();
   }
 });

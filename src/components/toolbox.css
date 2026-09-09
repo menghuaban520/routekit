@@ -27,7 +27,7 @@
   background: var(--tint);
 }
 .network-home {
-  background: #fff;
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 30px;
@@ -126,7 +126,7 @@
   gap: 7px;
 }
 .stop-button {
-  color: #b34742;
+  color: #ff9b90;
 }
 .measurement-progress {
   display: flex;
@@ -154,10 +154,10 @@
   align-items: flex-start;
   gap: 9px;
   padding: 13px;
-  background: #fff7e8;
-  border: 1px solid #f0dfbb;
+  background: #2b2518;
+  border: 1px solid var(--line);
   border-radius: 8px;
-  color: #795724;
+  color: #dfb778;
   line-height: 1.75;
   margin: 16px 0;
   font-size: 13px;
@@ -171,7 +171,7 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px 30px;
-  background: #f7f9fb;
+  background: var(--panel);
   border-radius: 9px;
   padding: 20px;
   margin: 22px 0 0;
@@ -221,7 +221,7 @@
 }
 .external-tools > a:hover {
   border-color: var(--accent);
-  background: #fafdfc;
+  background: var(--tint);
 }
 .external-tools > a > svg:first-child {
   color: var(--accent);
@@ -246,7 +246,7 @@
   margin: 7px 0;
 }
 .external-tools small {
-  color: #6b7a8d;
+  color: var(--muted);
   font-size: 10px;
 }
 @media (max-width: 900px) {

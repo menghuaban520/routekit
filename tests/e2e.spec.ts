@@ -29,9 +29,7 @@ async function expectNoPageOverflow(page: Page) {
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/?view=config");
-  await expect(
-    page.getByRole("heading", { name: "让每个应用，走对的路。" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "路由编排" })).toBeVisible();
 });
 
 test("downloads an actual .conf file with the selected routing and DNS settings", async ({

@@ -63,28 +63,28 @@ const workspaces = [
     id: "network",
     label: "网络概览",
     icon: Globe2,
-    title: "你的网络，清楚一点。",
+    title: "网络观测",
     description: "查看出口、测量速度与连通，找到 DNS 和网络暴露检查入口。",
   },
   {
     id: "nodes",
     label: "订阅与节点",
     icon: Network,
-    title: "把节点整理好，再出发。",
+    title: "节点仓库",
     description: "导入订阅、查看用量，结合本地实测结果挑选合适的节点。",
   },
   {
     id: "config",
     label: "分流配置",
     icon: GitBranch,
-    title: "让每个应用，走对的路。",
+    title: "路由编排",
     description: "选应用、定分流，生成属于你的 Shadowrocket 配置。",
   },
   {
     id: "diagnostics",
     label: "批量检查",
     icon: ListFilter,
-    title: "每一条流量，都有去向。",
+    title: "规则诊断",
     description: "用当前分流配置，检查一批域名和 IP 的规则命中情况。",
   },
 ] as const;
@@ -137,11 +137,19 @@ function Note({
   children: ReactNode;
   warning?: boolean;
 }) {
-  return (
+  const content = (
     <div className={`note ${warning ? "warning" : ""}`}>
       <Info size={16} />
       <div>{children}</div>
     </div>
+  );
+  return warning ? (
+    content
+  ) : (
+    <details className="inline-note">
+      <summary>使用说明</summary>
+      {content}
+    </details>
   );
 }
 function Modal({
@@ -506,7 +514,7 @@ export default function App() {
           <a className="brand" href="./" aria-label="RouteKit 首页">
             <GitBranch size={31} strokeWidth={2.1} />
             <strong>RouteKit</strong>
-            <span>网络工具箱</span>
+            <span>网络观测台</span>
           </a>
           <nav aria-label="帮助与项目">
             <button onClick={() => setModal("guide")} className="text-button">
@@ -529,12 +537,10 @@ export default function App() {
                 <span>开源说明</span>
               </button>
             )}
-            <div className="privacy">
-              <ShieldCheck size={23} />
-              <span>
-                本地处理<small>配置只在你的浏览器生成</small>
-              </span>
-            </div>
+            <span className="local-status">
+              <span />
+              LOCAL WORKSPACE
+            </span>
           </nav>
         </div>
       </header>
@@ -542,7 +548,6 @@ export default function App() {
         <section className="intro">
           <div>
             <h1>{currentWorkspace.title}</h1>
-            <p>{currentWorkspace.description}</p>
           </div>
           {activeView === "config" && (
             <div className="mode-switch" role="group" aria-label="编辑模式">
@@ -586,13 +591,11 @@ export default function App() {
         <div hidden={activeView !== "config"}>
           <div className="client-toolbar">
             <div className="client-choice">
-              <span>选择客户端</span>
               <div className="client-tag">
                 <Smartphone size={19} />
                 Shadowrocket
                 <Check size={15} />
               </div>
-              <span className="upcoming">Clash、v2rayN 后续支持</span>
             </div>
             <button className="text-button" onClick={openSaved}>
               <FolderOpen size={17} />
@@ -659,8 +662,7 @@ export default function App() {
                 {tab === "apps" && (
                   <>
                     <div className="section-heading">
-                      <h2>应用怎么连接，由你决定</h2>
-                      <p>直连使用本地网络，代理使用你在小火箭选择的节点。</p>
+                      <h2>应用规则</h2>
                     </div>
                     <div className="app-toolbar">
                       <div className="search-field">
@@ -802,8 +804,7 @@ export default function App() {
                 {tab === "basic" && (
                   <>
                     <div className="section-heading">
-                      <h2>先选一个适合你的连接方式</h2>
-                      <p>应用和自定义规则优先，下面的设置负责其余流量。</p>
+                      <h2>路由策略</h2>
                     </div>
                     <fieldset className="preset-options">
                       <legend>快捷方案</legend>
@@ -905,8 +906,7 @@ export default function App() {
                 {tab === "dns" && (
                   <>
                     <div className="section-heading">
-                      <h2>给域名解析，多一层保护</h2>
-                      <p>设置解析方式，并在客户端连接后验证实际效果。</p>
+                      <h2>DNS 解析</h2>
                     </div>
                     <div
                       className="dns-options"
@@ -1010,7 +1010,7 @@ export default function App() {
                         }
                       />
                     </label>
-                    <Note warning>
+                    <Note>
                       加密 DNS 不代表已消除泄漏。浏览器自己的
                       DoH、IPv6、客户端设置和节点能力都可能改变解析路径。本网页不检测你设备的真实
                       DNS 流量。
@@ -1040,10 +1040,7 @@ export default function App() {
                 {tab === "chain" && (
                   <>
                     <div className="section-heading">
-                      <h2>先经过前置节点，再到出口</h2>
-                      <p>
-                        分流决定哪些流量走代理，链式代理决定它怎么到达出口。
-                      </p>
+                      <h2>代理链路</h2>
                     </div>
                     <div className="chain-diagram">
                       <div>
@@ -1064,59 +1061,50 @@ export default function App() {
                         <small>目标看到的 IP</small>
                       </div>
                     </div>
-                    <div className="guide-bottom toolbox-guide">
-                      <h3>先选择要做的事</h3>
-                      <p>
-                        “网络概览”查看当前出口、测延迟和下载速度，并打开 DNS
-                        检查；“订阅与节点”导入自己的订阅、查看用量，导入本地实测结果排序；“批量检查”核对当前配置如何处理域名和
-                        IP。
-                      </p>
-                      <p>
-                        网络概览测试的是浏览器当前连接。要分别测订阅中的每个代理节点，请在“订阅与节点”下载本地检测器和检测任务，运行后导回结果。
-                      </p>
-                      <h3>为小火箭准备分流配置</h3>
-                    </div>
-                    <div className="step-list">
-                      <div>
-                        <span>1</span>
-                        <section>
-                          <h3>在小火箭添加两个节点</h3>
-                          <p>
-                            准备可用的前置节点和出口节点，先分别验证它们的连接状态。
-                          </p>
-                        </section>
+                    <details className="chain-setup">
+                      <summary>客户端设置步骤</summary>
+                      <div className="step-list">
+                        <div>
+                          <span>1</span>
+                          <section>
+                            <h3>在小火箭添加两个节点</h3>
+                            <p>
+                              准备可用的前置节点和出口节点，先分别验证它们的连接状态。
+                            </p>
+                          </section>
+                        </div>
+                        <div>
+                          <span>2</span>
+                          <section>
+                            <h3>为出口设置 Proxy Pass</h3>
+                            <p>
+                              编辑出口节点，在“代理通过 / Proxy
+                              Pass”中选择前置节点。入口名称和支持情况取决于客户端版本与节点协议。
+                            </p>
+                          </section>
+                        </div>
+                        <div>
+                          <span>3</span>
+                          <section>
+                            <h3>选择出口节点，启用本页配置</h3>
+                            <p>
+                              将主页所选节点设为出口，再启用分流配置。配置中的
+                              PROXY 会使用这个选择。
+                            </p>
+                          </section>
+                        </div>
+                        <div>
+                          <span>4</span>
+                          <section>
+                            <h3>确认真正走通了整条链</h3>
+                            <p>
+                              检查连通性、出口 IP
+                              和持续访问。节点已保存或延迟测试成功，都不能单独证明链路正常。
+                            </p>
+                          </section>
+                        </div>
                       </div>
-                      <div>
-                        <span>2</span>
-                        <section>
-                          <h3>为出口设置 Proxy Pass</h3>
-                          <p>
-                            编辑出口节点，在“代理通过 / Proxy
-                            Pass”中选择前置节点。入口名称和支持情况取决于客户端版本与节点协议。
-                          </p>
-                        </section>
-                      </div>
-                      <div>
-                        <span>3</span>
-                        <section>
-                          <h3>选择出口节点，启用本页配置</h3>
-                          <p>
-                            将主页所选节点设为出口，再启用分流配置。配置中的
-                            PROXY 会使用这个选择。
-                          </p>
-                        </section>
-                      </div>
-                      <div>
-                        <span>4</span>
-                        <section>
-                          <h3>确认真正走通了整条链</h3>
-                          <p>
-                            检查连通性、出口 IP
-                            和持续访问。节点已保存或延迟测试成功，都不能单独证明链路正常。
-                          </p>
-                        </section>
-                      </div>
-                    </div>
+                    </details>
                     <label className="setting-row">
                       <div>
                         <strong>前置节点缺失时停止连接</strong>
@@ -1159,7 +1147,7 @@ export default function App() {
                 {tab === "advanced" && advanced && (
                   <>
                     <div className="section-heading">
-                      <h2>规则的每一个细节，都能调整</h2>
+                      <h2>自定义规则</h2>
                       <p>
                         从上到下匹配。以下规则优先于应用规则，局域网直连除外。
                       </p>
@@ -1398,7 +1386,7 @@ export default function App() {
                   ))}
                 </pre>
                 <div className="code-footer">
-                  <span>下载包含全部 {result.ruleCount} 条规则</span>
+                  <span>{result.ruleCount} 条规则</span>
                   <span>{fullPreview ? "UTF-8" : "通用设置已折叠"}</span>
                 </div>
               </div>
@@ -1446,7 +1434,7 @@ export default function App() {
                   保存到本地
                 </button>
               </div>
-              <p className="save-hint">
+              <p className="save-hint" hidden={!lastSaved}>
                 {lastSaved && savedState === profileState ? (
                   <>
                     <CheckCheck size={15} />
@@ -1511,7 +1499,7 @@ export default function App() {
                 className="import-help text-button accent"
                 onClick={() => setModal("guide")}
               >
-                下载之后，怎么导入小火箭？
+                导入指南
                 <ArrowRight size={15} />
               </button>
             </aside>
@@ -1524,7 +1512,7 @@ export default function App() {
           <button onClick={() => setModal("guide")}>使用指南</button>
           <span>·</span>
           <span>MIT License</span>
-          <span className="version">v0.2.0</span>
+          <span className="version">v0.3.0</span>
         </div>
       </footer>
       {message && (
