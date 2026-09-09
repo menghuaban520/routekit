@@ -2077,7 +2077,7 @@ body { line-height: 1.55; }
 .button.primary { color: white; background: var(--accent); }
 .button.outline { background: white; color: #355579; border-color: #ccd8e7; }
 input, select, textarea { background: white; font-size: 14px; }
-input, select { min-height: 42px; }
+input:not([type="checkbox"]):not([type="radio"]), select { min-height: 42px; }
 .text-button { font-size: 13px; }
 .helper { font-size: 13px; line-height: 1.75; }
 .section-heading h2 { font-size: 20px; font-weight: 600; }
