@@ -1,3 +1,5 @@
+import { looksLikeClashYaml, readClashSubscription } from "./clash-import";
+
 /** Local-only node import. References: SIP002, v2rayN VMess share links, Xray #716. */
 export type ProxyNode = {
   id: string;
@@ -386,6 +388,12 @@ function parseVmess(uri: string, warnings: string[]): ProxyNode {
     !["0", "1", "true", "false"].includes(String(data.insecure))
   )
     fail("VMess insecure 参数无效");
+  for (const key of ["udp", "tfo"]) {
+    if (data[key] !== undefined && !["0", "1", "true", "false"].includes(String(data[key])))
+      fail(`VMess ${key} 参数无效`);
+  }
+  if (data.alpn !== undefined && data.alpn !== "" && !/^[a-zA-Z0-9./-]+(?:,[a-zA-Z0-9./-]+)*$/.test(String(data.alpn)))
+    fail("VMess ALPN 参数无效");
   if (["1", "true"].includes(String(data.insecure)))
     warnings.push("部分节点关闭了证书验证，请在客户端核对其 TLS 设置。");
   const server = serverName(data.add),
@@ -448,8 +456,13 @@ function parseUrlNode(uri: string, warnings: string[]): ProxyNode {
     credentials = `${encodeURIComponent(username)}${url.password ? `:${encodeURIComponent(password)}` : ""}@`;
   }
   const query = parseParameters(url.search.slice(1), warnings);
-  if (["socks5", "http", "https"].includes(protocol) && query)
-    fail("SOCKS5/HTTP(S) 节点链接暂不支持附加参数");
+  if (["socks5", "http", "https"].includes(protocol) && query) {
+    const allowed = protocol === "https"
+      ? ["sni", "peer", "alpn", "insecure", "allowInsecure", "tfo"]
+      : protocol === "socks5" ? ["udp", "tfo"] : ["tfo"];
+    if ([...new URLSearchParams(query).keys()].some(key => !allowed.includes(key)))
+      fail("SOCKS5/HTTP(S) 节点包含暂不支持的附加参数");
+  }
   if (protocol === "http" || protocol === "socks5")
     warnings.push("HTTP 与 SOCKS5 协议本身不提供传输加密，请核对使用场景。");
   const normalized = `${protocol}://${credentials}${hostPort(server, port)}${query ? `?${query}` : ""}${name ? `#${encodeURIComponent(name)}` : ""}`;
@@ -482,14 +495,6 @@ export function proxyNodeIdentity(node: ProxyNode): string {
   delete data.ps;
   return JSON.stringify(data);
 }
-function isYaml(text: string): boolean {
-  return (
-    /^(?:\s*)(?:proxies|proxy-groups|proxy-providers|mixed-port|socks-port|port|allow-lan|dns|rules):/m.test(
-      text,
-    ) || /^\s*-\s+(?:name|type|server):/m.test(text)
-  );
-}
-
 export function parseSubscription(input: string): SubscriptionResult {
   const result: SubscriptionResult = { nodes: [], errors: [], warnings: [] };
   if (
@@ -501,27 +506,29 @@ export function parseSubscription(input: string): SubscriptionResult {
   }
   let text = input.replace(/^\uFEFF/, "").trim();
   if (!text) {
-    result.errors.push("请粘贴节点链接或 Base64 订阅内容");
+    result.errors.push("请粘贴节点链接、Base64 或 Clash/Mihomo YAML 订阅内容");
     return result;
   }
-  if (!/^\s*[a-z][a-z0-9+.-]*:\/\//im.test(text) && !isYaml(text)) {
+  if (!/^\s*[a-z][a-z0-9+.-]*:\/\//im.test(text) && !looksLikeClashYaml(text)) {
     try {
       text = decodeBase64(text.replace(/\s/g, "")).trim();
     } catch {
-      result.errors.push("支持节点链接列表或 Base64 订阅；内容无法识别");
+      result.errors.push("支持节点链接列表、Base64 或 Clash/Mihomo YAML 订阅；内容无法识别");
       return result;
     }
   }
-  if (isYaml(text)) {
-    result.errors.push("支持链接列表/Base64，YAML 暂不支持");
-    return result;
+  const yaml = looksLikeClashYaml(text) ? readClashSubscription(text) : null;
+  if (yaml) {
+    result.errors.push(...yaml.errors);
+    result.warnings.push(...yaml.warnings);
   }
-  const lines = text.split(/\r?\n/),
-    seen = new Set<string>();
+  const lines = text.split(/\r?\n/);
+  const entries = yaml ? yaml.entries : lines.slice(0, 10000).map((uri, index) => ({ uri, index }));
+  const seen = new Set<string>();
   let duplicates = 0,
     suppressedErrors = 0;
-  for (let index = 0; index < Math.min(lines.length, 10000); index++) {
-    const line = lines[index].trim();
+  for (const { uri, index } of entries) {
+    const line = uri.trim();
     if (!line || line.startsWith("#")) continue;
     try {
       const itemWarnings: string[] = [],
@@ -540,11 +547,11 @@ export function parseSubscription(input: string): SubscriptionResult {
       result.warnings.push(...itemWarnings);
     } catch (error) {
       if (result.errors.length < 100)
-        result.errors.push(`第 ${index + 1} 行：${(error as Error).message}`);
+        result.errors.push(`第 ${index + 1} ${yaml ? "个 YAML 节点" : "行"}：${(error as Error).message}`);
       else suppressedErrors++;
     }
   }
-  if (lines.length > 10000)
+  if (!yaml && lines.length > 10000)
     result.errors.push("内容超过 10000 行，超出部分未读取");
   if (suppressedErrors)
     result.errors.push(`另有 ${suppressedErrors} 行无效，已省略详细错误`);

@@ -1,4 +1,4 @@
-"""Offline regression tests: no real subscriptions, external services or proxy core."""
+"""Offline regressions: fake nodes, no external traffic; optional installed-core syntax check."""
 import base64
 import contextlib
 import importlib.util
@@ -6,6 +6,7 @@ import io
 import json
 from pathlib import Path
 import ssl
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -105,6 +106,63 @@ class ParserTests(unittest.TestCase):
             with self.subTest(parameters=parameters_string), self.assertRaises(probe.ProbeError):
                 self.parse(node(f'vless://{UUID}@example.com:443?' + parameters_string, 'vless'))
 
+    def test_canonical_connection_flags_are_preserved_across_protocols(self):
+        links = [
+            (node()['uri'].split('#')[0], 'ss'),
+            (f'vless://{UUID}@example.com:443', 'vless'),
+            ('trojan://fixture-secret@example.com:443', 'trojan'),
+            ('socks5://fixture:secret@example.com:443', 'socks5'),
+        ]
+        for prefix, protocol in links:
+            for enabled in ('0', 'false', '1', 'true'):
+                with self.subTest(protocol=protocol, enabled=enabled):
+                    parsed = self.parse(node(prefix + '?udp=' + enabled + '&tfo=' + enabled, protocol))
+                    self.assertEqual(parsed['udp'], enabled in {'1', 'true'})
+                    self.assertEqual(parsed['tfo'], enabled in {'1', 'true'})
+        for protocol in ('http', 'https'):
+            parsed = self.parse(node(protocol + '://example.com:443?tfo=1', protocol))
+            self.assertTrue(parsed['tfo'])
+        data = {'v': '2', 'add': 'example.com', 'port': 443, 'id': UUID, 'aid': 0, 'net': 'tcp'}
+        for enabled in (False, True, 0, 1, '0', '1', 'false', 'true'):
+            data.update(udp=enabled, tfo=enabled)
+            parsed = self.parse(node('vmess://' + b64(json.dumps(data)), 'vmess'))
+            self.assertEqual(parsed['udp'], enabled in (True, 1, '1', 'true'))
+            self.assertEqual(parsed['tfo'], enabled in (True, 1, '1', 'true'))
+
+    def test_yaml_tls_flags_https_alpn_and_vmess_insecure_false(self):
+        parsed = self.parse(node('https://fixture:secret@example.com:443?sni=tls.example.net&alpn=h2%2Chttp%2F1.1&allowInsecure=0&tfo=0', 'https'))
+        self.assertEqual(parsed['sni'], 'tls.example.net')
+        self.assertNotIn('servername', parsed)
+        self.assertEqual(parsed['alpn'], ['h2', 'http/1.1'])
+        self.assertFalse(parsed['skip-cert-verify'])
+        self.assertFalse(parsed['tfo'])
+        data = {'v': '2', 'add': 'example.com', 'port': 443, 'id': UUID, 'aid': 0,
+                'net': 'grpc', 'path': 'fixture-service', 'tls': 'tls', 'alpn': 'h2', 'udp': '0', 'tfo': '1'}
+        for safe in ('0', 'false', False, 0):
+            data['insecure'] = safe
+            parsed = self.parse(node('vmess://' + b64(json.dumps(data)), 'vmess'))
+            self.assertFalse(parsed['skip-cert-verify'])
+            self.assertFalse(parsed['udp'])
+            self.assertTrue(parsed['tfo'])
+            self.assertEqual(parsed['grpc-opts'], {'grpc-service-name': 'fixture-service'})
+
+    def test_added_options_never_accept_unknown_values_or_disable_certificate_checks(self):
+        for query in ('udp=maybe', 'udp=', 'udp=1&udp=0', 'tfo=-1', 'tfo=1&plugin=obfs'):
+            with self.subTest(query=query), self.assertRaises(probe.ProbeError):
+                self.parse(node(node()['uri'].split('#')[0] + '?' + query))
+        for query in ('allowInsecure=1', 'insecure=true', 'alpn=unsupported', 'udp=0', 'tfo=unknown'):
+            with self.subTest(query=query), self.assertRaises(probe.ProbeError):
+                self.parse(node('https://fixture:secret@example.com:443?' + query, 'https'))
+        for unsafe in ('1', 'true', True, 1, [], {}, 0.0):
+            data = {'v': '2', 'add': 'example.com', 'port': 443, 'id': UUID, 'tls': 'tls', 'insecure': unsafe}
+            with self.subTest(value=unsafe), self.assertRaises(probe.ProbeError) as caught:
+                self.parse(node('vmess://' + b64(json.dumps(data)), 'vmess'))
+            self.assertNotIn('fixture-secret', str(caught.exception))
+        for invalid in (None, [], {}, 0.0, 2, 'yes'):
+            data = {'v': '2', 'add': 'example.com', 'port': 443, 'id': UUID, 'udp': invalid}
+            with self.subTest(value=invalid), self.assertRaises(probe.ProbeError):
+                self.parse(node('vmess://' + b64(json.dumps(data)), 'vmess'))
+
     def test_metadata_cannot_misidentify_the_server(self):
         for candidate in [node(server='other.example'), node(port=8443), node(protocol='vless')]:
             with self.assertRaises(probe.ProbeError):
@@ -120,6 +178,108 @@ class ParserTests(unittest.TestCase):
         with self.assertRaises(probe.ProbeError):
             probe.validate_job(job([node(), node()]))
         self.assertFalse(probe.validate_job(job())[1]['speedTest'])
+
+
+# These fake nodes go through the real TypeScript YAML importer before Python
+# receives their canonical URIs, so importer/helper contract drift is exercised.
+YAML_NODES = """
+proxies:
+  - { name: YAML SS, type: ss, server: ss.example.com, port: 443, cipher: aes-256-gcm, password: fixture-secret, udp: false, tfo: true }
+  - name: YAML VMess
+    type: vmess
+    server: vmess.example.com
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000001
+    alterId: 0
+    cipher: auto
+    tls: true
+    servername: tls.example.com
+    skip-cert-verify: false
+    alpn: [h2]
+    client-fingerprint: chrome
+    network: grpc
+    grpc-opts: { grpc-service-name: fixture-service }
+    udp: true
+    tfo: false
+  - name: YAML VLESS
+    type: vless
+    server: vless.example.com
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000001
+    tls: true
+    servername: tls.example.com
+    reality-opts: { public-key: CQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA, short-id: ab12 }
+    flow: xtls-rprx-vision
+    client-fingerprint: chrome
+    udp: false
+    tfo: false
+  - name: YAML Trojan
+    type: trojan
+    server: trojan.example.com
+    port: 443
+    password: fixture-secret
+    sni: tls.example.com
+    skip-cert-verify: false
+    alpn: [http/1.1]
+    network: ws
+    ws-opts: { path: /fixture, headers: { Host: edge.example.com } }
+    udp: true
+    tfo: false
+  - { name: YAML SOCKS5, type: socks5, server: socks.example.com, port: 1080, username: fixture, password: fixture-secret, udp: false, tfo: true }
+  - { name: YAML HTTP, type: http, server: http.example.com, port: 8080, username: fixture, password: 'fixture #,:中文', tfo: false }
+  - { name: YAML HTTPS, type: http, server: https.example.com, port: 443, username: fixture, password: fixture-secret, tls: true, sni: tls.example.com, alpn: [h2, http/1.1], skip-cert-verify: false, tfo: true }
+"""
+
+
+class YamlImporterContractTests(unittest.TestCase):
+    def test_real_yaml_canonical_nodes_build_supported_private_core_configuration(self):
+        project = Path(__file__).resolve().parents[2]
+        if not shutil.which('node') or not (project / 'node_modules' / 'esbuild').is_dir():
+            self.skipTest('cross-language contract requires npm ci and Node.js')
+        script = """
+import { build } from 'esbuild';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+const built = await build({stdin:{contents:"export { parseSubscription } from './src/core/subscriptions.ts'",resolveDir:process.cwd()},bundle:true,platform:'node',format:'cjs',write:false,logLevel:'silent'});
+const loaded = { exports: {} };
+new Function('module', 'exports', 'require', built.outputFiles[0].text)(loaded, loaded.exports, createRequire(import.meta.url));
+const { parseSubscription } = loaded.exports;
+process.stdout.write(JSON.stringify(parseSubscription(readFileSync(0, 'utf8'))));
+"""
+        imported = subprocess.run(['node', '--input-type=module', '-e', script], input=YAML_NODES, text=True,
+                                  capture_output=True, cwd=project, timeout=20)
+        self.assertEqual(imported.returncode, 0, 'real YAML importer process failed')
+        result = json.loads(imported.stdout)
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(len(result['nodes']), 7)
+        probe.validate_job(job(result['nodes']))
+        parsed = [probe.parse_node(candidate, 'NODE_' + str(index)) for index, candidate in enumerate(result['nodes'])]
+        self.assertEqual([item['type'] for item in parsed], ['ss', 'vmess', 'vless', 'trojan', 'socks5', 'http', 'http'])
+        self.assertEqual([item['udp'] for item in parsed[:5]], [False, True, False, True, False])
+        self.assertEqual([item['tfo'] for item in parsed], [True, False, False, False, True, False, True])
+        self.assertEqual(parsed[1]['grpc-opts'], {'grpc-service-name': 'fixture-service'})
+        self.assertEqual(parsed[1]['alpn'], ['h2'])
+        self.assertFalse(parsed[1]['skip-cert-verify'])
+        self.assertEqual(parsed[2]['flow'], 'xtls-rprx-vision')
+        self.assertEqual(parsed[2]['reality-opts']['short-id'], 'ab12')
+        self.assertEqual(parsed[3]['ws-opts'], {'path': '/fixture', 'headers': {'Host': 'edge.example.com'}})
+        self.assertEqual(parsed[5]['password'], 'fixture #,:中文')
+        self.assertEqual(parsed[6]['sni'], 'tls.example.com')
+        self.assertEqual(parsed[6]['alpn'], ['h2', 'http/1.1'])
+        self.assertFalse(parsed[6]['skip-cert-verify'])
+        # The app bundles public assets only; never inspect user configurations.
+        executable = Path('/Applications/Clash Verge.app/Contents/MacOS/verge-mihomo')
+        if executable.is_file():
+            with tempfile.TemporaryDirectory(prefix='routekit-yaml-probe-test-') as directory:
+                path = Path(directory) / 'config.json'
+                config = probe.core_config(parsed, 19891, 19892, 'fixture-controller-secret', 'fixture:proxy-secret')
+                with path.open('w', encoding='utf-8') as target:
+                    path.chmod(0o600)
+                    json.dump(config, target)
+                validated = subprocess.run([str(executable), '-d', directory, '-f', str(path), '-t'],
+                                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                           timeout=15, cwd=directory, env={})
+                self.assertEqual(validated.returncode, 0, 'installed isolated Mihomo rejected canonical YAML node parameters')
 
 
 class FakeCore:

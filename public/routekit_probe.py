@@ -149,9 +149,28 @@ def transport(proxy, network, host='', path='', service='', header='none', mode=
         raise ProbeError('普通 TCP 包含无法应用的传输参数；未忽略这些参数。')
 
 
+def connection_flags(proxy, options):
+    """Preserve explicit canonical URI flags instead of forcing core defaults."""
+    for key in ('udp', 'tfo'):
+        if key not in options:
+            continue
+        value = options[key]
+        if isinstance(value, bool):
+            proxy[key] = value
+        elif type(value) is int and value in (0, 1):
+            proxy[key] = bool(value)
+        elif isinstance(value, str) and value in {'0', '1', 'false', 'true'}:
+            proxy[key] = value in {'1', 'true'}
+        else:
+            raise ProbeError('节点 UDP / TCP Fast Open 设置无效。')
+
+
 def tls_options(proxy, security, options, trojan=False):
-    if options.get('allowInsecure', '0') not in {'0', 'false'} or options.get('insecure', '0') not in {'0', 'false'}:
-        raise ProbeError('检测器不允许关闭 TLS 证书验证。')
+    for key in ('allowInsecure', 'insecure'):
+        value = options.get(key, '0')
+        safe = value is False or type(value) is int and value == 0 or isinstance(value, str) and value in {'0', 'false', ''}
+        if not safe:
+            raise ProbeError('检测器不允许关闭 TLS 证书验证。')
     if security not in {'none', 'tls', 'reality'} or (trojan and security != 'tls'):
         raise ProbeError('暂不支持此 TLS / 安全类型。')
     if security == 'none':
@@ -198,7 +217,7 @@ def parse_node(node, internal_name):
         if protocol == 'vmess':
             raw = uri[8:].split('#', 1)[0]
             data = json.loads(decode64(raw))
-            allowed = {'v', 'ps', 'add', 'port', 'id', 'aid', 'scy', 'net', 'type', 'host', 'path', 'tls', 'sni', 'alpn', 'fp'}
+            allowed = {'v', 'ps', 'add', 'port', 'id', 'aid', 'scy', 'net', 'type', 'host', 'path', 'tls', 'sni', 'alpn', 'fp', 'udp', 'tfo', 'insecure', 'allowInsecure'}
             if not isinstance(data, dict) or set(data) - allowed:
                 raise ProbeError('VMess 包含暂不支持的字段。')
             if str(data.get('v', '2')) != '2':
@@ -220,6 +239,7 @@ def parse_node(node, internal_name):
             transport(proxy, network, data.get('host', ''), '' if network == 'grpc' else data.get('path', ''),
                       data.get('path', '') if network == 'grpc' else '', data.get('type') or 'none')
             tls_options(proxy, data.get('tls') or 'none', data)
+            connection_flags(proxy, data)
         else:
             legacy_ss = False
             if protocol == 'ss' and '@' not in uri.split('#', 1)[0].split('?', 1)[0]:
@@ -234,7 +254,7 @@ def parse_node(node, internal_name):
             port = port_number(parsed.port or {'http': 80, 'https': 443, 'socks5': 1080}.get(protocol))
             auth = parsed.netloc.rsplit('@', 1)[0] if '@' in parsed.netloc else ''
             if protocol == 'ss':
-                query_options(parsed.query, set())
+                connection_flags(proxy, query_options(parsed.query, {'udp', 'tfo'}))
                 credentials = auth if legacy_ss else decoded(auth)
                 if ':' not in credentials:
                     credentials = decode64(credentials)
@@ -247,7 +267,8 @@ def parse_node(node, internal_name):
             elif protocol in {'vless', 'trojan'}:
                 options = query_options(parsed.query, {'type', 'security', 'sni', 'fp', 'alpn', 'pbk', 'sid', 'flow',
                                                         'encryption', 'host', 'path', 'serviceName', 'headerType',
-                                                        'mode', 'allowInsecure', 'insecure'})
+                                                        'mode', 'allowInsecure', 'insecure', 'udp', 'tfo'})
+                connection_flags(proxy, options)
                 if ':' in auth or not auth:
                     raise ProbeError('节点认证字段格式无效。')
                 if protocol == 'vless':
@@ -267,16 +288,18 @@ def parse_node(node, internal_name):
                         raise ProbeError('暂不支持此 VLESS flow 组合。')
                     proxy['flow'] = options['flow']
             else:
-                options = query_options(parsed.query, {'sni'} if protocol == 'https' else set())
+                allowed = {'sni', 'alpn', 'insecure', 'allowInsecure', 'tfo'} if protocol == 'https' else {'udp', 'tfo'} if protocol == 'socks5' else {'tfo'}
+                options = query_options(parsed.query, allowed)
+                connection_flags(proxy, options)
                 if auth:
                     if ':' not in auth:
                         raise ProbeError('HTTP / SOCKS5 认证需要 username:password。')
                     user, password = auth.split(':', 1)
                     proxy.update(username=clean_text(decoded(user)), password=clean_text(decoded(password), 4096, empty=True))
                 if protocol == 'https':
-                    proxy['tls'] = True
-                    if options.get('sni'):
-                        proxy['sni'] = host_name(options['sni'])
+                    tls_options(proxy, 'tls', options)
+                    if 'servername' in proxy:
+                        proxy['sni'] = proxy.pop('servername')
         if host_name(node['server']) != server or port_number(node['port']) != port:
             raise ProbeError('节点主机或端口与 URI 不一致，请重新导出检测任务。')
         proxy.update(server=server, port=port)

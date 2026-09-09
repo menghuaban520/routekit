@@ -3,7 +3,9 @@ import {
   proxyNodeIdentity,
   type ProxyNode,
 } from "./subscriptions";
-import type { NodeRouting, Policy, Profile } from "./types";
+import { toMihomoProxy } from "./adapters/proxy-options";
+import { toXrayOutbound } from "./adapters/xray";
+import type { ClientId, NodeRouting, Policy, Profile } from "./types";
 
 // Shadowrocket syntax evidence: LOWERTOP's maintained, executable configuration
 // documents [Proxy] positional credentials and direct node-name rule policies:
@@ -191,9 +193,14 @@ function renamedUri(node: ProxyNode, alias: string): string {
   return `vmess://${encodeBase64(JSON.stringify(data))}`;
 }
 
-function compileNode(input: ProxyNode): CompiledRoutingNode {
+function compileNode(input: ProxyNode, client: ClientId = "shadowrocket"): CompiledRoutingNode {
   const node = checkedNode(input),
     alias = nodeRoutingAlias(node);
+  if (client !== "shadowrocket") {
+    if (client === "clash") toMihomoProxy(node, alias);
+    else toXrayOutbound(node, alias);
+    return { node, alias, mode: "embedded", importUri: node.uri };
+  }
   const definition = inlineDefinition(node);
   return {
     node,
@@ -204,9 +211,9 @@ function compileNode(input: ProxyNode): CompiledRoutingNode {
   };
 }
 
-export function nodeRoutingSupport(node: ProxyNode): NodeRoutingSupport {
+export function nodeRoutingSupport(node: ProxyNode, client: ClientId = "shadowrocket"): NodeRoutingSupport {
   try {
-    const compiled = compileNode(node);
+    const compiled = compileNode(node, client);
     return {
       supported: true,
       mode: compiled.mode,
@@ -246,7 +253,7 @@ export function routePolicyLabel(
   const node = resolveRouteNode(profile, policy, target);
   return node
     ? node.name
-    : { DIRECT: "直连", PROXY: "客户端当前节点", REJECT: "拦截" }[policy];
+    : { DIRECT: "直连", PROXY: profile.client === "shadowrocket" ? "客户端当前节点" : "尚未绑定节点", REJECT: "拦截" }[policy];
 }
 
 export function compileRoutingNodes(profile: Profile): CompiledRoutingNode[] {
@@ -263,7 +270,7 @@ export function compileRoutingNodes(profile: Profile): CompiledRoutingNode[] {
   for (const rule of profile.rules) add(rule.policy, { ruleId: rule.id });
   return profile.nodeRouting.nodes
     .filter((node) => used.has(node.id))
-    .map(compileNode);
+    .map(node => compileNode(node, profile.client));
 }
 
 export function routingNodeBundle(profile: Profile): {

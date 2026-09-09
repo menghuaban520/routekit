@@ -1,8 +1,12 @@
 import type { ConfigExporter } from "../types";
+import { clashExporter } from "./clash";
+import { xrayExporter } from "./xray";
 import { shadowrocketExporter } from "./shadowrocket";
 
 const exporters: ReadonlyMap<string, ConfigExporter> = new Map([
   [shadowrocketExporter.id, shadowrocketExporter],
+  [clashExporter.id, clashExporter],
+  [xrayExporter.id, xrayExporter],
 ]);
 
 export function getConfigExporter(client: string): ConfigExporter | undefined {
@@ -16,6 +20,6 @@ export const CLIENTS = [
     extension: shadowrocketExporter.extension,
     available: true,
   },
-  { id: "clash", name: "Clash / Mihomo", extension: ".yaml", available: false },
-  { id: "v2rayn", name: "v2rayN", extension: ".json", available: false },
+  { id: "clash", name: "Clash / Mihomo", extension: ".yaml", available: true },
+  { id: "v2rayn", name: "v2rayN", extension: ".json", available: true },
 ] as const;

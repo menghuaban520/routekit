@@ -4,6 +4,7 @@ import {
   type Policy,
   type Profile,
 } from "./index";
+import type { NormalizedRule } from "./types";
 import { compileRoutingNodes, type CompiledRoutingNode } from "./node-routing";
 
 export type DiagnosticStatus =
@@ -146,48 +147,18 @@ function parseInput(raw: string): Input {
   return { target: domain ?? firstAddress!.text, domain, address, country };
 }
 
-// Read the exported configuration, so normalization, deduplication and rule order
-// remain owned by the actual client compiler rather than a parallel rule builder.
-function parseRules(content: string, nodes: CompiledRoutingNode[]): Rule[] {
-  let section = "";
+// Consume the same validated model used by every exporter, not a client-specific
+// text parser. Matching is a configuration check, not a client execution trace.
+function parseRules(normalized: NormalizedRule[], nodes: CompiledRoutingNode[]): Rule[] {
   const rules: Rule[] = [];
-  for (const raw of content.split(/\r?\n/)) {
-    const text = raw.trim();
-    if (text.startsWith("[")) {
-      section = text;
-      continue;
-    }
-    if (section !== "[Rule]" || !text || text.startsWith("#")) continue;
-    const fields = text.split(",").map((value) => value.trim());
-    const type = fields[0];
-    const policy = fields[type === "FINAL" ? 1 : 2];
-    const node = nodes.find((node) => node.alias === policy);
-    if (
-      ![
-        "DOMAIN",
-        "DOMAIN-SUFFIX",
-        "DOMAIN-KEYWORD",
-        "IP-CIDR",
-        "IP-CIDR6",
-        "GEOIP",
-        "FINAL",
-      ].includes(type) ||
-      (!node && !["DIRECT", "PROXY", "REJECT"].includes(policy))
-    )
-      throw new Error(`检查器暂不支持生成规则：${text}`);
+  for (const source of normalized) {
+    const { type, value, noResolve } = source;
+    const target = source.target ?? source.policy;
+    const text = type === "FINAL" ? `FINAL,${target}` : `${type},${value},${target}${noResolve ? ",no-resolve" : ""}`;
+    const node = nodes.find(node => node.alias === target);
     const rule: Rule = {
-      text,
-      type,
-      value: type === "FINAL" ? "" : fields[1],
-      policy: node ? "PROXY" : (policy as Policy),
-      ...(node
-        ? {
-            nodeId: node.node.id,
-            nodeName: node.node.name,
-            nodeMode: node.mode,
-          }
-        : {}),
-      noResolve: fields.slice(3).includes("no-resolve"),
+      text, type, value, policy: source.policy, noResolve,
+      ...(node ? { nodeId: node.node.id, nodeName: node.node.name, nodeMode: node.mode } : {}),
     };
     if (type === "IP-CIDR" || type === "IP-CIDR6") {
       const [rawAddress, rawPrefix] = rule.value.split("/");
@@ -338,13 +309,13 @@ export function diagnoseBatch(
     };
   let rules: Rule[];
   try {
-    rules = parseRules(compiled.content, compileRoutingNodes(profile));
+    rules = parseRules(compiled.normalizedRules ?? [], compileRoutingNodes(profile));
   } catch (error) {
     return { results: [], errors: [(error as Error).message], ruleCount: 0 };
   }
   const seen = new Map<string, number>();
   const results = lines.map((raw, index): DiagnosticResult => {
-    const base = { line: index + 1, input: raw, warnings: [] as string[] };
+    const base = { line: index + 1, input: raw, warnings: profile.client === "v2rayn" ? ["这是规则意图检查；Xray 会在遇到 IP 规则时按需解析域名；表格按 TCP 规则判断，所选节点 udp=false 时 UDP 会被拦截，请以客户端实际连接为准。"] : [] as string[] };
     try {
       const input = parseInput(raw);
       const key = [

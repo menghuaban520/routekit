@@ -22,6 +22,7 @@ export type {
   Profile,
   NodeRouting,
 } from "./types";
+export type { ClientId } from "./types";
 export { CLIENTS, getConfigExporter } from "./adapters";
 export {
   nodeRoutingSupport,
@@ -286,7 +287,7 @@ function assertProfile(value: unknown): asserts value is Profile {
     "配置",
   );
   oneOf(value.version, [1], "配置版本");
-  oneOf(value.client, ["shadowrocket"], "客户端");
+  oneOf(value.client, ["shadowrocket", "clash", "v2rayn"], "客户端");
   string(value.name, "配置名称", 80, false);
   if (CONTROL.test(value.name))
     throw new Error("配置名称不能包含控制字符或换行");
@@ -486,7 +487,9 @@ export function compileProfile(profile: Profile): CompilationResult {
         : dnsServers(profile.dns.servers, errors);
   const extraGeneral = exporter.parseGeneral(profile.general, errors);
   const hosts = hostLines(profile.hosts, errors);
-  const routingNodes = compileRoutingNodes(profile);
+  let routingNodes: ReturnType<typeof compileRoutingNodes> = [];
+  try { routingNodes = compileRoutingNodes(profile); }
+  catch (error) { errors.push((error as Error).message); }
   const rules: NormalizedRule[] = [],
     seenRules = new Map<string, string>();
   const networkRanges = new Map<NormalizedRule, NetworkRange>();
@@ -512,7 +515,7 @@ export function compileProfile(profile: Profile): CompilationResult {
       type,
       value,
       policy,
-      noResolve,
+      noResolve: profile.client === "v2rayn" ? false : noResolve,
       ...(node ? { target } : {}),
     };
     const range =
@@ -642,7 +645,16 @@ export function compileProfile(profile: Profile): CompilationResult {
     warnings.push(
       `${externalNodes.length} 个节点需先导入配套节点文件，再导入本配置；请保留 RK_ 节点备注。仅下载 .conf 无法包含这些节点的完整连接参数。`,
     );
-  const content = exporter.serialize({
+  if (profile.client === "clash") warnings.push("Mihomo 使用客户端 GeoIP 数据库判断国内 IP；默认加密 DNS 的主机名仍需明文引导解析，请实测 DNS 路径。配置只监听本机 7890，不自动开启系统代理或 TUN。");
+  if (profile.client === "v2rayn") {
+    warnings.push("这是 Xray 自定义 JSON：在 v2rayN 选择 Xray 内核，配置监听本机 SOCKS 10808 / HTTP 10809，GEOIP CN 需要 geoip.dat；不会自动开启系统代理或 TUN。");
+    warnings.push("Xray 内置 DNS 使用独立直连出站以避免解析循环；DoH 服务器域名可能先由系统 DNS 引导解析，加密设置不能证明无泄漏。");
+    warnings.push("Xray 使用 IPOnDemand：遇到 IP 规则时可先解析域名，因此不能保留小火箭逐条 no-resolve 行为；批量检查缺少解析 IP 时会标记待确认。带 udp=false 的节点会在其对应分流中拒绝 UDP。");
+    if (!profile.dns.ipv6) warnings.push("Xray 的 IPv6 关闭限制内置 DNS 和直连域名解析为 IPv4，不能阻止应用向代理提交 IPv6 地址。");
+  }
+  let content = "";
+  try { content = exporter.serialize({
+    sources: routingNodes.map(({ node, alias }) => ({ node, alias })),
     servers,
     ipv6: profile.dns.ipv6,
     general: extraGeneral,
@@ -652,12 +664,13 @@ export function compileProfile(profile: Profile): CompilationResult {
       .filter((node) => node.mode === "embedded")
       .map((node) => ({ alias: node.alias, definition: node.definition! })),
     externalNodes: externalNodes.map((node) => ({ alias: node.alias })),
-  });
+  }); } catch (error) { errors.push((error as Error).message); }
   return {
     content: errors.length ? "" : content,
     errors: [...new Set(errors)],
     warnings: [...new Set(warnings)],
     ruleCount: rules.length,
+    normalizedRules: errors.length ? undefined : rules,
   };
 }
 
@@ -695,7 +708,7 @@ export function fileName(name: string): string {
     .replace(/[<>:"/\\|?*\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, "")
     .trim()
     .replace(/^\.+|\.+$/g, "")
-    .replace(/\.(conf|json)$/i, "")
+    .replace(/\.(conf|json|ya?ml)$/i, "")
     .replace(/\.+$/g, "")
     .slice(0, 64);
   return !safe ||

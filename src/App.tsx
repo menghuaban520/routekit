@@ -41,6 +41,8 @@ import {
 } from "lucide-react";
 import {
   APP_CATALOG,
+  CLIENTS,
+  getConfigExporter,
   createProfile,
   compileProfile,
   parseProfile,
@@ -364,6 +366,8 @@ export default function App() {
   function selectConfigTab(next: Tab) { changeWorkspace("config", next, false); }
   const [profile, setProfile] = useState<Profile>(createProfile);
   const [nodes, setNodes] = useState<ProxyNode[]>([]);
+  const exporter = getConfigExporter(profile.client)!;
+  const shadowrocket = profile.client === "shadowrocket";
   const [downloaded, setDownloaded] = useState(false);
   const nodeChoices = useMemo(() => {
     const all = new Map((profile.nodeRouting?.nodes ?? []).map(node => [proxyNodeIdentity(node), node]));
@@ -371,13 +375,14 @@ export default function App() {
     return [...all.values()];
   }, [nodes, profile.nodeRouting?.nodes]);
   const nodeBundle = useMemo(() => routingNodeBundle(profile), [profile]);
+  const nodeSupport = useMemo(() => new Map(nodeChoices.map(node => [node.id, nodeRoutingSupport(node, profile.client)])), [nodeChoices, profile.client]);
   function bindNode(nodeId: string, appId?: string) {
     const libraryNode = nodes.find(node => node.id === nodeId);
     const selected = nodeChoices.find(node => node.id === nodeId) ?? (libraryNode ? nodeChoices.find(node => proxyNodeIdentity(node) === proxyNodeIdentity(libraryNode)) : undefined);
     if (nodeId && !selected) { setMessage("节点已变更，请重新选择。"); return; }
     nodeId = selected?.id ?? "";
-    if (selected && !nodeRoutingSupport(selected).supported) {
-      setMessage(nodeRoutingSupport(selected).reason ?? "此节点暂不能绑定配置。");
+    if (selected && !nodeSupport.get(selected.id)?.supported) {
+      setMessage(nodeSupport.get(selected.id)?.reason ?? "此节点暂不能绑定配置。");
       return;
     }
     setProfile(previous => {
@@ -397,8 +402,8 @@ export default function App() {
   }
   function nodeSelect(value: string | undefined, label: string, appId?: string) {
     return <select aria-label={label} value={value ?? ""} onChange={event => bindNode(event.target.value, appId)}>
-      <option value="">{appId ? "跟随默认代理" : "在小火箭选择节点"}</option>
-      {nodeChoices.map(node => <option key={node.id} value={node.id} disabled={!nodeRoutingSupport(node).supported}>{node.name} · {node.protocol.toUpperCase()}{!nodeRoutingSupport(node).supported ? "（暂不支持）" : ""}</option>)}
+      <option value="">{appId ? "跟随默认代理" : shadowrocket ? "在小火箭选择节点" : "选择默认代理节点"}</option>
+      {nodeChoices.map(node => <option key={node.id} value={node.id} disabled={!nodeSupport.get(node.id)?.supported} title={nodeSupport.get(node.id)?.reason}>{node.name} · {node.protocol.toUpperCase()}{!nodeSupport.get(node.id)?.supported ? "（此格式暂不支持）" : ""}</option>)}
     </select>;
   }
   const [advanced, setAdvanced] = useState(initialNavigation.view === "config" && initialNavigation.tool === "advanced");
@@ -420,6 +425,7 @@ export default function App() {
   }, []);
   const [search, setSearch] = useState("");
   const [fullPreview, setFullPreview] = useState(false);
+  const expandedPreview = fullPreview || !shadowrocket;
   const [modal, setModal] = useState<
     "catalog" | "custom" | "saved" | "guide" | null
   >(null);
@@ -446,7 +452,7 @@ export default function App() {
     .map((line, index) => ({ line, index }))
     .filter(
       ({ line }) =>
-        fullPreview ||
+        expandedPreview ||
         line === "[General]" ||
         line === "[Rule]" ||
         line.startsWith("dns-server =") ||
@@ -699,17 +705,16 @@ export default function App() {
           <div className="workflow-steps" aria-label="配置步骤">
             <button onClick={() => changeWorkspace("nodes")}><b>{nodeChoices.length ? <Check size={17}/> : "1"}</b><span><strong>导入订阅</strong><small>{nodeChoices.length ? `${nodeChoices.length} 个节点可选` : "已有节点也可直接配置"}</small></span><ArrowRight size={16}/></button>
             <button onClick={() => selectConfigTab("apps")} className="current"><b>2</b><span><strong>应用分流</strong><small>为应用选择连接方式</small></span><ArrowRight size={16}/></button>
-            <button onClick={() => document.querySelector<HTMLButtonElement>(".download-button")?.focus()}><b>{downloaded ? <Check size={17}/> : "3"}</b><span><strong>下载配置</strong><small>{downloaded ? "已发起下载" : "预览并生成 .conf"}</small></span><ArrowRight size={16}/></button>
+            <button onClick={() => document.querySelector<HTMLButtonElement>(".download-button")?.focus()}><b>{downloaded ? <Check size={17}/> : "3"}</b><span><strong>下载配置</strong><small>{downloaded ? "已发起下载" : `预览并生成 ${exporter.extension}`}</small></span><ArrowRight size={16}/></button>
             <button onClick={() => setModal("guide")}><b>4</b><span><strong>客户端验证</strong><small>导入、连接，再检查</small></span></button>
           </div>
           <div className="client-toolbar">
-            <div className="client-choice">
-              <div className="client-tag">
-                <Smartphone size={19} />
-                Shadowrocket
-                <Check size={15} />
-              </div>
-            </div>
+            <label className="client-choice client-picker">
+              <span>导出到</span>
+              <select aria-label="导出客户端" value={profile.client} onChange={event => patch({ client: event.target.value as Profile["client"] })}>
+                {CLIENTS.filter(client => client.available).map(client => <option key={client.id} value={client.id}>{client.name} · {client.extension}</option>)}
+              </select>
+            </label>
             <button className="text-button" onClick={openSaved}>
               <FolderOpen size={17} />
               本地方案
@@ -1139,7 +1144,7 @@ export default function App() {
                       </summary>
                       <ol>
                         <li>
-                          导入并启用配置，在小火箭中选择“配置”路由模式后连接。
+                          {shadowrocket ? "导入并启用配置，在小火箭中选择“配置”路由模式后连接。" : "按下方导入步骤启用配置，再连接代理。"}
                         </li>
                         <li>查看客户端 DNS 日志，确认解析服务器与设置相符。</li>
                         <li>
@@ -1154,7 +1159,7 @@ export default function App() {
                     </details>
                   </>
                 )}
-                {tab === "chain" && (
+                {tab === "chain" && shadowrocket && (
                   <>
                     <div className="section-heading">
                       <h2>代理链路</h2>
@@ -1261,6 +1266,7 @@ export default function App() {
                     </Note>
                   </>
                 )}
+                {tab === "chain" && !shadowrocket && <div className="client-import-guide"><h2>链式代理</h2><p>当前导出保留应用与节点的分流绑定，暂不生成 {exporter.name} 的前置代理链。需要串联节点时，请在对应客户端配置并验证。</p><button className="button outline" onClick={() => selectConfigTab("apps")}>返回应用分流</button></div>}
                 {tab === "advanced" && advanced && (
                   <>
                     <div className="section-heading">
@@ -1395,7 +1401,8 @@ export default function App() {
                       />
                     </label>
                     <label className="field-label advanced-field">
-                      General 扩展设置
+                      General 扩展设置（小火箭专属）
+                      {!shadowrocket && <span className="helper">这些参数属于小火箭，导出到当前客户端前请清空；切换格式不会自动删除已有内容。</span>}
                       <span className="helper">
                         支持
                         icmp-auto-reply、always-reject-url-rewrite、private-ip-answer、use-local-host-item-for-proxy、close-if-proxy-chain-missing，值为
@@ -1475,10 +1482,10 @@ export default function App() {
                     aria-label="方案名称"
                     placeholder="my-routes"
                   />
-                  <span>.conf</span>
+                  <span>{exporter.extension}</span>
                 </div>
               </label>
-              {!!profile.nodeRouting?.nodes.length && <div className="node-export-guide">
+              {ready && !!profile.nodeRouting?.nodes.length && <div className="node-export-guide">
                 <strong>{nodeBundle.referenceCount ? "先导入配套节点，再导入配置" : "已将所选节点写入配置"}</strong>
                 <p>{nodeBundle.referenceCount ? "配套节点保留原协议参数。先把下方节点文件导入小火箭，保留 RK_ 开头的名称，再导入 .conf。" : "导入后可按应用规则使用对应节点。"} 下载文件和本地方案包含节点凭证，请仅自己保管。</p>
                 {nodeBundle.referenceCount > 0 && <button className="button outline" disabled={!ready || !!nodeBundle.errors.length} onClick={() => download(nodeBundle.content, `${fileName(profile.name)}.nodes.txt`)}><Download size={16}/>下载配套节点（含凭证）</button>}
@@ -1488,13 +1495,13 @@ export default function App() {
                   className="button primary download-button"
                   disabled={!ready}
                   onClick={() => {
-                    download(result.content, `${fileName(profile.name)}.conf`);
+                    download(result.content, `${fileName(profile.name)}${exporter.extension}`, profile.client === "v2rayn" ? "application/json" : shadowrocket ? "text/plain" : "application/yaml");
                     setDownloaded(true);
-                    setMessage("已发起 .conf 下载，请在浏览器下载列表查看。");
+                    setMessage(`已发起 ${exporter.extension} 下载，请在浏览器下载列表查看。`);
                   }}
                 >
                   <Download size={19} />
-                  下载 .conf
+                  下载 {exporter.extension}
                 </button>
                 <button
                   className="button outline"
@@ -1505,6 +1512,10 @@ export default function App() {
                   保存到本地
                 </button>
               </div>
+              <details className="client-import-guide" open={!shadowrocket}>
+                <summary>{exporter.name} 导入步骤</summary>
+                {shadowrocket ? <p>在小火箭的“配置”页导入 .conf，再选中并启用；全局路由选择“配置”。若上方有配套节点，先导入节点文件并保留 RK_ 名称。</p> : profile.client === "clash" ? <p>在使用 Mihomo 内核的客户端（如 Clash Verge Rev）中导入本地 .yaml，启用该配置并选择“规则”模式。首次使用国内 IP 规则时，客户端需要可用的 GeoIP 数据。</p> : <><p>在 v2rayN 中选择“添加自定义配置”，导入 .json，内核选择 Xray；编辑窗口的“Socks 端口”保持未设置，避免额外前置分流。国内 IP 规则需要客户端的 geoip.dat。</p><p>启用后，在要代理的应用中手动设置 SOCKS5 127.0.0.1:10808 或 HTTP 127.0.0.1:10809；仅打开 v2rayN 自动系统代理不保证接上此配置。遇到端口占用先停用冲突配置。</p></>}
+              </details>
               <p className="save-hint" hidden={!lastSaved}>
                 {lastSaved && savedState === profileState ? (
                   <>
@@ -1524,15 +1535,15 @@ export default function App() {
                 <div className="code-toolbar">
                   <span>
                     <Code2 size={14} />
-                    {fullPreview ? "Shadowrocket .conf" : "关键规则"}
+                    {expandedPreview ? `${exporter.name} ${exporter.extension}` : "关键规则"}
                   </span>
-                  <button
+                  {shadowrocket && <button
                     className="preview-toggle"
                     aria-pressed={fullPreview}
                     onClick={() => setFullPreview(!fullPreview)}
                   >
                     {fullPreview ? "精简预览" : "完整配置"}
-                  </button>
+                  </button>}
                   <button
                     className="icon-button small"
                     title="复制配置"
@@ -1543,7 +1554,7 @@ export default function App() {
                         await navigator.clipboard.writeText(result.content);
                         setMessage("配置已复制。");
                       } catch {
-                        setMessage("浏览器未允许复制，请使用“下载 .conf”。");
+                        setMessage(`浏览器未允许复制，请使用“下载 ${exporter.extension}”。`);
                       }
                     }}
                   >
@@ -1571,7 +1582,7 @@ export default function App() {
                 </pre>
                 <div className="code-footer">
                   <span>{result.ruleCount} 条规则</span>
-                  <span>{fullPreview ? "UTF-8" : "通用设置已折叠"}</span>
+                  <span>{expandedPreview ? "UTF-8" : "通用设置已折叠"}</span>
                 </div>
               </div>
               <div className="backup-actions">
@@ -1637,7 +1648,7 @@ export default function App() {
           <button onClick={() => setModal("guide")}>使用指南</button>
           <span>·</span>
           <span>MIT License</span>
-          <span className="version">v0.5.0</span>
+          <span className="version">v0.6.0</span>
         </div>
       </footer>
       {message && (
@@ -1805,7 +1816,7 @@ export default function App() {
         </Modal>
       )}
       {modal === "guide" && (
-        <Modal title="从检测网络，到用好小火箭" onClose={closeModal} wide>
+        <Modal title="从导入节点，到验证分流" onClose={closeModal} wide>
           <div className="guide-intro">
             <ShieldCheck size={27} />
             <p>
@@ -1819,7 +1830,7 @@ export default function App() {
               <section>
                 <h3>导入已有订阅或节点</h3>
                 <p>
-                  先在“订阅与节点”粘贴订阅链接或导入节点文件，再点“用于分流”。没有订阅也可以先编排规则，之后在小火箭选择自己的节点。
+                  先在“订阅与节点”粘贴订阅链接或导入节点文件，再点“用于分流”。选择导出客户端，再为代理规则绑定节点；小火箭也可以使用客户端当前节点。
                 </p>
               </section>
             </div>
@@ -1835,9 +1846,9 @@ export default function App() {
             <div>
               <span>3</span>
               <section>
-                <h3>下载并导入 .conf</h3>
+                <h3>按客户端格式导入</h3>
                 <p>
-                  如果页面出现“下载配套节点”，先导入该文件并保留 RK_ 开头的节点名。再下载 .conf，在小火箭“配置”页从本地文件导入，或通过系统分享菜单打开。入口依版本而异。
+                  小火箭导入 .conf，必要时先导入配套节点；Mihomo 客户端导入 .yaml；v2rayN 通过“添加自定义配置”导入 .json 并选 Xray 内核。下载按钮旁有当前客户端的详细步骤。
                 </p>
               </section>
             </div>
@@ -1846,7 +1857,7 @@ export default function App() {
               <section>
                 <h3>启用配置，选择节点，再验证</h3>
                 <p>
-                  启用导入的配置，将全局路由设为“配置”。指定节点的应用按绑定连接，未指定的代理流量使用客户端所选节点。连接后打开应用，并在“网络检查”验证出口、连通和 DNS。
+                  启用刚导入的配置；小火箭选“配置”路由、Mihomo 客户端选“规则”模式、v2rayN 按导入步骤手动设置应用代理。连接后打开应用，并在“网络检查”验证出口、连通和 DNS。
                 </p>
               </section>
             </div>
@@ -1857,9 +1868,9 @@ export default function App() {
               “保存到本地”写入此浏览器；“导出方案备份”下载可再次编辑的
               JSON。支持导入 RouteKit JSON 备份，暂不反向解析任意 .conf。
             </p>
-            <h3>开源与后续客户端</h3>
+            <h3>开源与客户端兼容</h3>
             <p>
-              代码采用 MIT License。当前配置导出支持 Shadowrocket。Clash/Mihomo 可使用本地检测器及实时流量监测，其他客户端的完整配置格式后续适配。网站没有统计脚本，后端仅返回当前访问的 IP
+              代码采用 MIT License。支持 Shadowrocket、Clash/Mihomo 配置与 v2rayN 的 Xray 自定义配置。各客户端支持的协议参数不同，不能准确转换时会提示并阻止导出。网站没有统计脚本，后端仅返回当前访问的 IP
               信息；订阅不会经过本站后端。
             </p>
             {REPO_URL && (

@@ -447,7 +447,7 @@ describe("local backups and filenames", () => {
     expect(() => parseProfile("[General]")).toThrow("JSON");
     for (const patch of [
       { version: 2 },
-      { client: "clash" },
+      { client: "unsupported" },
       { password: "x" },
       { bypassLan: "true" },
       { name: "x\n[Rule]" },
@@ -484,11 +484,11 @@ describe("local backups and filenames", () => {
 describe("client exporter registry", () => {
   it("registers only implemented clients and derives their download format from the adapter", () => {
     expect(getConfigExporter("shadowrocket")?.extension).toBe(".conf");
-    expect(getConfigExporter("clash")).toBeUndefined();
-    expect(getConfigExporter("v2rayn")).toBeUndefined();
+    expect(getConfigExporter("clash")?.extension).toBe(".yaml");
+    expect(getConfigExporter("v2rayn")?.extension).toBe(".json");
     expect(
       CLIENTS.filter((client) => client.available).map((client) => client.id),
-    ).toEqual(["shadowrocket"]);
+    ).toEqual(["shadowrocket", "clash", "v2rayn"]);
   });
 
   it("serializes normalized rules through the Shadowrocket adapter", () => {

@@ -1,5 +1,6 @@
 import type { ProxyNode } from "./subscriptions";
 
+export type ClientId = "shadowrocket" | "clash" | "v2rayn";
 export type Policy = "DIRECT" | "PROXY" | "REJECT";
 export type NodeRouting = {
   nodes: ProxyNode[];
@@ -25,7 +26,7 @@ export type CustomRule = {
 export type Profile = {
   version: 1;
   name: string;
-  client: "shadowrocket";
+  client: ClientId;
   domesticPolicy: "DIRECT" | "PROXY";
   finalPolicy: "DIRECT" | "PROXY";
   bypassLan: boolean;
@@ -53,6 +54,7 @@ export type NormalizedRule = {
 export type GeneralOption = { key: string; value: string };
 export type HostMapping = { hostname: string; address: string };
 export type ExportModel = {
+  sources?: { alias: string; node: ProxyNode }[];
   servers: string[];
   ipv6: boolean;
   general: GeneralOption[];
@@ -73,4 +75,5 @@ export type CompilationResult = {
   errors: string[];
   warnings: string[];
   ruleCount: number;
+  normalizedRules?: NormalizedRule[];
 };

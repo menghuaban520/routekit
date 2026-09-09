@@ -2084,6 +2084,13 @@ input:not([type="checkbox"]):not([type="radio"]), select { min-height: 42px; }
 .section-heading p { font-size: 14px; margin-top: 6px; }
 .section-heading { margin-bottom: 19px; }
 .client-toolbar { margin: 0 0 14px; }
+.client-picker { gap: 10px; min-width: 0; max-width: none; flex-wrap: nowrap; }
+.client-picker > span { white-space: nowrap; }
+.client-picker select { width: min(260px, 100%); min-width: 0; font-size: 14px; font-weight: 600; }
+.client-import-guide { margin: 14px 0; padding: 13px 15px; border: 1px solid var(--line); border-radius: 8px; background: #f8fafc; font-size: 13px; line-height: 1.7; color: var(--muted); }
+.client-import-guide summary { color: var(--text); cursor: pointer; font-weight: 600; }
+.client-import-guide p { margin: 8px 0 0; }
+.client-import-guide .button { margin-top: 12px; }
 .client-tag { padding: 5px 10px; font-size: 13px; background: transparent; border-color: var(--line); color: #4e617c; }
 .workflow-steps { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); border: 1px solid var(--line); background: white; border-radius: 9px; margin-bottom: 22px; padding: 15px 10px; }
 .workflow-steps button { display: flex; align-items: center; gap: 11px; min-width: 0; text-align: left; padding: 3px 12px; border-radius: 5px; }

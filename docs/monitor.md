@@ -6,6 +6,8 @@
 
 ## 网页直接检测节点
 
+从 v0.5 或更早版本升级时，请重新下载 `routekit_probe.py`，替换助手同目录的旧检测模块并重启助手。v0.6 新增 YAML 节点携带的 UDP/TFO 和 TLS 参数兼容；旧模块可能将这些节点报告为不支持。
+
 需要 Python 3.10 或更新版本，以及自己安装的 Mihomo。把 [`routekit_monitor.py`](../public/routekit_monitor.py) 与 [`routekit_probe.py`](../public/routekit_probe.py) 下载到同一目录后运行：
 
 ```sh

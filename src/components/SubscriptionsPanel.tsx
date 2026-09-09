@@ -162,7 +162,7 @@ async function limitedResponseText(response: Response): Promise<string> {
   if (Number(response.headers.get("content-length")) > MAX_BYTES)
     throw new Error("订阅内容超过 2 MB，已停止读取");
   if (!response.body)
-    throw new Error("浏览器无法流式读取订阅，请下载 .txt 文件后导入");
+    throw new Error("浏览器无法流式读取订阅，请下载节点文件后导入");
   const reader = response.body.getReader(),
     parts: Uint8Array[] = [];
   let size = 0;
@@ -633,7 +633,7 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
         );
       if (response.headers.get("content-type")?.includes("text/html"))
         throw new Error(
-          "订阅返回了网页，请使用订阅的节点文本链接或导入 .txt 文件",
+          "订阅返回了网页，请使用订阅的节点文本链接或导入节点文件",
         );
       const content = await limitedResponseText(response);
       const parsed = parseSubscription(content);
@@ -685,9 +685,9 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
       if (!refresh) importedNodesReady(next, parsed.nodes);
     } catch (error) {
       const explanation = controller.signal.aborted
-        ? "读取已取消或超过 15 秒。你可以下载订阅 .txt 文件，再从本地导入。"
+        ? "读取已取消或超过 15 秒。你可以下载订阅文件，再从本地导入。"
         : error instanceof TypeError
-          ? "浏览器未能读取订阅。服务可能未开放 CORS、存在重定向或网络不可用；请手动下载 .txt 文件，或粘贴节点内容。"
+          ? "浏览器未能读取订阅。服务可能未开放 CORS、存在重定向或网络不可用；请手动下载节点文件，或粘贴节点内容。"
           : error instanceof Error
             ? error.message
             : "读取失败，请改用粘贴或文件导入。";
@@ -864,7 +864,7 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
         {queuePaused && <div className="subscriptions-actions"><button type="button" className="button outline compact" disabled={helperConnecting} onClick={() => void connectHelper()}>重新连接并继续队列</button>{helperCapabilities && <button type="button" className="text-button accent" onClick={retryRetainedQueue}>{pendingSubmission.current ? "明确重试保留节点（可能重复当前批次）" : "重试未完成节点"}</button>}</div>}
       </div>}
       <ol hidden={currentSection !== "import"} className="subscriptions-start" aria-label="订阅到分流的三个步骤">
-        <li><span>1</span><div><strong>拿到订阅</strong><p>在服务商后台复制「订阅链接」，或准备节点 .txt 文件。</p></div></li>
+        <li><span>1</span><div><strong>拿到订阅</strong><p>在服务商后台复制「订阅链接」，或准备节点文本 / YAML 文件。</p></div></li>
         <li><span>2</span><div><strong>自动检测</strong><p>连接本地助手后，导入即可检测出口 IP、延迟与连通性。</p></div></li>
         <li><span>3</span><div><strong>给应用选节点</strong><p>按实测结果排序，点「用于分流」指定应用去向。</p></div></li>
       </ol>
@@ -955,12 +955,12 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
             )}
           </div>
         </label>
-        <p className="helper subscriptions-import-hint">订阅链接通常在服务商后台的「订阅 / 一键导入」里。请选通用节点链接或 Base64 格式。</p>
+        <p className="helper subscriptions-import-hint">订阅链接通常在服务商后台的「订阅 / 一键导入」里。可用通用节点链接、Base64 或 Clash / Mihomo YAML；YAML 只导入节点，分流规则在本站另行配置。</p>
         {fetchedSource && (
           <p className="helper subscriptions-source">最近读取：{fetchedSource}</p>
         )}
         <label className="subscriptions-field" htmlFor="subscription-paste">
-          节点链接或 Base64 内容
+          节点链接、Base64 或 YAML 内容
           <textarea
             id="subscription-paste"
             rows={3}
@@ -969,7 +969,7 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
             autoCorrect="off"
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            placeholder="每行一条节点链接，或粘贴 Base64 订阅"
+            placeholder="每行一条节点链接，或粘贴 Base64 / Clash YAML 订阅"
           />
         </label>
         <div className="subscriptions-actions">
@@ -989,7 +989,7 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
             onClick={() => nodeFile.current?.click()}
           >
             <FileUp size={16} />
-            导入 .txt 文件
+            导入节点文件
           </button>
           <button
             type="button"
@@ -1006,7 +1006,7 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
           hidden
           ref={nodeFile}
           type="file"
-          accept=".txt,text/plain"
+          accept=".txt,.yaml,.yml,text/plain,application/yaml,text/yaml"
           aria-label="选择节点文本文件"
           onChange={(event) => {
             const file = event.target.files?.[0];
@@ -1804,8 +1804,8 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
         <summary><Info size={15} />使用说明</summary>
         <div>
           <h3>导入与隐私</h3>
-          <p>未保存的节点库仅在当前会话中，刷新网页后清空。已绑定到配置的节点，会随你显式保存的方案保留（含凭证）。读取订阅时只请求你填写的服务；跨域不允许时，可粘贴内容或导入 .txt 文件，不经过转换服务器。节点链接和检测任务含有连接凭证，请作为私人文件保存。</p>
-          <p>支持 SS、VMess、VLESS、Trojan、SOCKS5、HTTP / HTTPS 节点链接和 Base64 列表；最多 2 MB、500 个节点，暂不解析 Clash YAML。手动 SS 2022 节点需使用对应长度的 Base64 密钥。</p>
+          <p>未保存的节点库仅在当前会话中，刷新网页后清空。已绑定到配置的节点，会随你显式保存的方案保留（含凭证）。读取订阅时只请求你填写的服务；跨域不允许时，可粘贴内容或导入节点文件，不经过转换服务器。节点链接和检测任务含有连接凭证，请作为私人文件保存。</p>
+          <p>支持 SS、VMess、VLESS、Trojan、SOCKS5、HTTP / HTTPS 节点链接和 Base64 列表；最多 2 MB、500 个节点，也支持 Clash / Mihomo YAML 的节点部分，不导入原规则、策略组或远程 providers。不能保留的节点参数会明确报错。手动 SS 2022 节点需使用对应长度的 Base64 密钥。</p>
           <h3>订阅该怎么选</h3>
           <ul className="subscriptions-provider-checklist">
             <li><strong>先核费用：</strong>在服务商订单页核对首期价、续费价、退款条件与自动续费。</li>

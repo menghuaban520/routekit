@@ -147,9 +147,9 @@ describe("local subscription import", () => {
   it.each([
     "proxies:\n  - name: example\n    type: ss",
     "mixed-port: 7890\nproxies: []",
-  ])("rejects YAML explicitly, including Base64 YAML: %s", (yaml) => {
+  ])("reports invalid or empty YAML node lists, including Base64 YAML: %s", (yaml) => {
     for (const value of [yaml, base64(yaml)])
-      expect(parseSubscription(value).errors[0]).toContain("YAML 暂不支持");
+      expect(parseSubscription(value).errors[0]).toMatch(/YAML|server/);
   });
 
   it("handles comments and blank lines", () => {
