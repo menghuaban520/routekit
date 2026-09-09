@@ -10,7 +10,12 @@ from pathlib import Path
 
 spec = importlib.util.spec_from_file_location("routekit_monitor", Path(__file__).parents[2] / "public" / "routekit_monitor.py")
 module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
+previous_bytecode = sys.dont_write_bytecode
+try:
+    sys.dont_write_bytecode = True
+    spec.loader.exec_module(module)
+finally:
+    sys.dont_write_bytecode = previous_bytecode
 ORIGIN = "http://127.0.0.1:4178"
 TOKEN = "fixture-only-monitor-token"
 

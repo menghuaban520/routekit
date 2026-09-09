@@ -76,9 +76,9 @@ curl -I https://your-project.your-subdomain.workers.dev/
 
 Workers 部署还应验证 `/api/connection` 返回 JSON、`Cache-Control: no-store` 和真实请求来源信息。IP 只代表访问本站时观测到的地址，不能证明到其他目标的出口一致；使用域名分流时，Cloudflare Speed 测量可能走另一条路径。网页上不同按钮的结果也可能来自不同采集时间。
 
-## 自托管站点的实时监测
+## 自托管站点的本地助手
 
-[只读监测器](monitor.md)固定监听使用者电脑的 `127.0.0.1:8766`，只读取已有 Mihomo；这不是部署在 Cloudflare 上的服务，也不是 Shadowrocket API。网页使用会话令牌发出 `GET /v1/snapshot`，监测器还会核对精确 `Origin`。
+[本地助手](monitor.md)固定监听使用者电脑的 `127.0.0.1:8766`；实时监测只读取已有 Mihomo，批量实测则使用独立临时内核。这不是部署在 Cloudflare 上的服务，也不是 Shadowrocket API。网页通过 `GET /v1/capabilities` 读取能力，用 `GET /v1/snapshot` 读取流量，用 `POST /v1/probe/jobs` 创建检测任务，`GET` / `DELETE /v1/probe/jobs/<id>` 读取进度或取消；所有操作都要求会话令牌和精确 Origin。
 
 自托管域名不在默认来源列表中。用户运行脚本时需追加自己的站点来源，不含末尾斜线和路径：
 
@@ -86,9 +86,11 @@ Workers 部署还应验证 `/api/connection` 返回 JSON、`Cache-Control: no-st
 python3 routekit_monitor.py --origin https://your-site.example
 ```
 
-controller 使用 secret 时，再按[监测器说明](monitor.md)传入 `--secret-file`。不要把 token 或 controller secret 放进 Cloudflare 环境变量、网站源码或公开地址。跨域预检和 CSP 允许之外，浏览器可能仍要求本地网络访问授权或限制 HTTPS 页面访问 loopback；用实际浏览器验证连接、停止和切页暂停行为。不应通过公网绑定、关闭证书验证或开放任意 Origin 解决限制。
+需要把 `routekit_probe.py` 放在助手同目录；Mihomo 核心由使用者本机提供，不由网站下载安装。controller 使用 secret 时，再按[助手说明](monitor.md)传入 `--secret-file`。不要把 token 或 controller secret 放进 Cloudflare 环境变量、网站源码或公开地址。跨域预检和 CSP 允许之外，浏览器可能仍要求本地网络访问授权或限制 HTTPS 页面访问 loopback；用实际浏览器验证连接、停止和切页暂停行为。不应通过公网绑定、关闭证书验证或开放任意 Origin 解决限制。
 
 不要给此站点启用注入脚本的 Web Analytics、Zaraz 或其他第三方统计，除非有意改变其隐私范围并更新代码、CSP 和说明。本站不依赖这些功能。
+
+`public/.assetsignore` 会随构建复制到输出目录，按 [Cloudflare 的静态资源排除规则](https://developers.cloudflare.com/workers/static-assets/binding/#ignoring-assets)阻止上传 Python 缓存和系统目录文件。测试导入 Python 模块时也关闭字节码写入，避免缓存混入构建。
 
 ## GitHub 开源发布
 

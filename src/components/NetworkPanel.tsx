@@ -32,10 +32,11 @@ type Connection = {
   tlsVersion: string | null;
 };
 type Phase = "connection" | "latency" | "speed";
-type NetworkView = "connection" | "host" | "leaks";
+export type NetworkSection = "overview" | "speed" | "host" | "leaks";
+type NetworkPanelProps = { section?: NetworkSection; onSectionChange?: (section: NetworkSection) => void; active?: boolean };
 type PhaseResult = { status: "running" | "passed" | "error" | "stopped"; message: string };
 type ThroughputSample = { elapsedMs: number; mbps: number; receivedBytes: number };
-type ProbeEvent = { id: number; at: string; text: string; tone: "data" | "info" | "error" };
+type ProbeEvent = { id: number; at: string; text: string; tone: "data" | "info" | "error"; section: "overview" | "speed" };
 const SPEED_BYTES = 5_000_000;
 const SPEED_URL = "https://speed.cloudflare.com/__down";
 const SAMPLE_INTERVAL = 100;
@@ -85,8 +86,13 @@ function LatencyChart({ samples }: { samples: number[] }) {
   );
 }
 
-export default function NetworkPanel() {
-  const [view, setView] = useState<NetworkView>("connection");
+export default function NetworkPanel({ section, onSectionChange, active = true }: NetworkPanelProps = {}) {
+  const [localSection, setLocalSection] = useState<NetworkSection>("overview");
+  const view = section ?? localSection;
+  function navigate(next: NetworkSection) {
+    if (section === undefined) setLocalSection(next);
+    onSectionChange?.(next);
+  }
   const [connection, setConnection] = useState<Connection>();
   const [ipCopied, setIpCopied] = useState(false);
   const [samples, setSamples] = useState<number[]>([]);
@@ -95,10 +101,11 @@ export default function NetworkPanel() {
   const [speed, setSpeed] = useState<number>();
   const [bytes, setBytes] = useState(0);
   const [busy, setBusy] = useState<Phase | "">("");
-  const [error, setError] = useState("");
+  const [errors, setErrors] = useState({ overview: "", speed: "" });
   const [ipAt, setIpAt] = useState(""), [latencyAt, setLatencyAt] = useState(""), [speedAt, setSpeedAt] = useState("");
   const [sampleAt, setSampleAt] = useState("");
-  const [connectionStatus, setConnectionStatus] = useState("尚未探测");
+  const [connectionStatus, setConnectionStatus] = useState("尚未检测");
+  const [speedStatus, setSpeedStatus] = useState("等待开始");
   const [events, setEvents] = useState<ProbeEvent[]>([]);
   const [phaseResults, setPhaseResults] = useState<Partial<Record<Phase, PhaseResult>>>({});
   const [hostInput, setHostInput] = useState("");
@@ -110,9 +117,14 @@ export default function NetworkPanel() {
   const eventId = useRef(0);
   const abort = useRef<AbortController | null>(null);
   useEffect(() => () => { abort.current?.abort(); dnsAbort.current?.abort(); }, []);
+  useEffect(() => {
+    // Changing categories or leaving the workspace must not keep using data.
+    abort.current?.abort();
+    dnsAbort.current?.abort();
+  }, [view, active]);
 
   async function queryHost() {
-    if (dnsAbort.current) return;
+    if (!active || dnsAbort.current) return;
     setHostResult(undefined); setHostError("");
     let query: DnsQuery;
     try { query = prepareDnsQuery(hostInput, recordType); }
@@ -138,7 +150,7 @@ export default function NetworkPanel() {
   }
 
   function record(text: string, tone: ProbeEvent["tone"] = "info") {
-    const entry = { id: ++eventId.current, at: clock(), text, tone };
+    const entry: ProbeEvent = { id: ++eventId.current, at: clock(), text, tone, section: view === "speed" ? "speed" : "overview" };
     setEvents((previous) => [entry, ...previous].slice(0, 12));
   }
 
@@ -159,7 +171,8 @@ export default function NetworkPanel() {
       if (data.local) throw new Error("本地开发环境不提供真实出口信息，请打开已部署的网站检测。");
       if (connection?.ip && connection.ip !== data.ip) {
         setSamples([]); setSpeed(undefined); setThroughput([]); setLiveRate(undefined); setBytes(0);
-        setLatencyAt(""); setSpeedAt(""); setSampleAt("");
+        setLatencyAt(""); setSpeedAt(""); setSampleAt(""); setSpeedStatus("等待重新测速");
+        setErrors(previous => ({ ...previous, speed: "" }));
         record("本站观测 IP 已变化，旧测速结果已清除");
       }
       setConnection(data); setIpAt(clock()); setConnectionStatus("网站连接正常");
@@ -235,7 +248,7 @@ export default function NetworkPanel() {
       const seconds = (performance.now() - start) / 1000;
       if (seconds <= 0) throw new Error("计时结果无效，请重试。");
       const average = received * 8 / seconds / 1_000_000;
-      setSpeed(average); setSpeedAt(clock()); setConnectionStatus("下载连通正常");
+      setSpeed(average); setSpeedAt(clock()); setSpeedStatus("下载连通正常");
       record(`完整接收 5 MB · 均值 ${decimal(average)} Mbps`, "data");
     } finally {
       flush(true);
@@ -243,13 +256,16 @@ export default function NetworkPanel() {
     }
   }
 
-  async function run(kind: Phase | "all") {
-    if (abort.current) return;
+  async function run(kind: Phase | "overview") {
+    if (!active || abort.current) return;
+    const scope = kind === "speed" ? "speed" : "overview";
     const controller = new AbortController();
     abort.current = controller;
-    setError(""); setConnectionStatus("探测进行中");
-    const errors: string[] = [];
-    const phases: Phase[] = kind === "all" ? ["connection", "latency", "speed"] : [kind];
+    setErrors(previous => ({ ...previous, [scope]: "" }));
+    if (scope === "speed") setSpeedStatus("测速进行中");
+    else setConnectionStatus("检测进行中");
+    const failures: string[] = [];
+    const phases: Phase[] = kind === "overview" ? ["connection", "latency"] : [kind];
     setPhaseResults((previous) => Object.fromEntries(Object.entries(previous).filter(([phase]) => !phases.includes(phase as Phase))));
     try {
       for (const phase of phases) {
@@ -264,14 +280,16 @@ export default function NetworkPanel() {
           const message = networkFailure(phase, failure);
           const stopped = controller.signal.aborted && failure instanceof DOMException && failure.name === "AbortError";
           setPhaseResults((previous) => ({ ...previous, [phase]: { status: stopped ? "stopped" : "error", message } }));
-          errors.push(message); setError(errors.join(" "));
+          failures.push(message); setErrors(previous => ({ ...previous, [scope]: failures.join(" ") }));
           record(`${PHASE_NAMES[phase]} · ${message}`, "error");
-          setConnectionStatus("部分项目未完成");
           if (controller.signal.aborted) break;
         } finally { clearTimeout(timer); }
       }
     } finally {
-      if (errors.length) setConnectionStatus("部分项目未完成");
+      if (failures.length) {
+        if (scope === "speed") setSpeedStatus(controller.signal.aborted ? "测速已停止" : "测速未完成");
+        else setConnectionStatus(controller.signal.aborted ? "检测已停止" : "部分项目未完成");
+      }
       if (abort.current === controller) abort.current = null;
       setBusy(""); setLiveRate(undefined);
     }
@@ -281,45 +299,31 @@ export default function NetworkPanel() {
   const jitter = samples.length === 3 ? Math.max(...samples) - Math.min(...samples) : undefined;
   const location = connection ? [connection.country, connection.region, connection.city].filter(Boolean).join(" · ") || "地区未提供" : "—";
   const organization = connection ? [connection.asn == null ? undefined : `AS${connection.asn}`, connection.organization].filter(Boolean).join(" · ") || "未提供" : "—";
+  function eventList(category: "overview" | "speed") {
+    const entries = events.filter(event => event.section === category);
+    return <details className="lab-records"><summary><Activity size={15} />{category === "speed" ? "测速记录" : "检测记录"}<span>{entries.length} 条</span></summary><ol className="lab-event-list">{entries.length ? entries.map(event => <li key={event.id} data-tone={event.tone}><time>{event.at}</time><i /><span>{event.text}</span></li>) : <li className="lab-event-empty">还没有记录，点击上方按钮开始。</li>}</ol></details>;
+  }
+  const measurementView = view === "overview" || view === "speed";
   return (
-    <section className="network-lab">
-      <nav className="lab-view-navigation" aria-label="网络检查工具">
-        {([{ key: "connection", label: "当前连接", icon: Activity }, { key: "host", label: "主机查询", icon: Search }, { key: "leaks", label: "泄漏检查", icon: ShieldCheck }] as const).map(({ key, label, icon: Icon }) => <button key={key} aria-current={view === key ? "page" : undefined} aria-controls={`network-${key}`} onClick={() => setView(key)}><Icon size={18} />{label}{key === "connection" && busy && <span className="lab-nav-running">检测中</span>}</button>)}
-      </nav>
-      <div id="network-connection" hidden={view !== "connection"}>
-      <div className="lab-setup"><div><h2>看清当前连接，找到下一步</h2><p>测试节点时，先在小火箭选中节点并连接，再回到这里检测。网页测的是浏览器当前路径。</p></div><span>按需检测 · 不在后台跑流量</span></div>
-      <div className="lab-toolbar">
-        <button className="button primary lab-start" disabled={!!busy} onClick={() => void run("all")}><Play size={15} />开始探测 · 5 MB</button>
-        <div className="lab-individual-actions">
-          <button className="button outline" disabled={!!busy} onClick={() => void run("connection")}><Globe2 size={15} />查看当前 IP</button>
-          <button className="button outline" disabled={!!busy} onClick={() => void run("latency")}><Timer size={15} />测延迟与连通</button>
-          <button className="button outline" disabled={!!busy} onClick={() => void run("speed")}><ArrowDownToLine size={15} />下载测速 · 5 MB</button>
+    <section className="network-lab" data-section={view}>
+      {section === undefined && <nav className="lab-view-navigation" aria-label="网络检查工具">
+        {([{ key: "overview", label: "网络概览", icon: Activity }, { key: "speed", label: "速度测试", icon: ArrowDownToLine }, { key: "host", label: "主机查询", icon: Search }, { key: "leaks", label: "泄漏检查", icon: ShieldCheck }] as const).map(({ key, label, icon: Icon }) => <button key={key} aria-current={view === key ? "page" : undefined} aria-controls={`network-${key}`} onClick={() => navigate(key)}><Icon size={18} />{label}</button>)}
+      </nav>}
+      {measurementView && <>
+        <div className="lab-setup"><div><h2>{view === "speed" ? "测一段真实的下载速度" : "当前出口与连通性"}</h2><p>{view === "speed" ? "接收 5 MB 样本，看实时速度与曲线。先连接要测试的节点，再开始。" : "查看网站看到的 IP，并用 3 次 HTTPS 请求检查当前连接。测试节点前，请先在小火箭中连接它。"}</p></div></div>
+        <div className="lab-toolbar">
+          {view === "overview" ? <><button className="button primary lab-start" disabled={!!busy} onClick={() => void run("overview")}><Play size={16} />开始检测</button><div className="lab-individual-actions"><button className="button outline" disabled={!!busy} onClick={() => void run("connection")}><Globe2 size={15} />查看当前 IP</button><button className="button outline" disabled={!!busy} onClick={() => void run("latency")}><Timer size={15} />测延迟与连通</button></div></> : <><button className="button primary lab-start" disabled={!!busy} onClick={() => void run("speed")}><ArrowDownToLine size={16} />下载测速 · 5 MB</button><span className="lab-sample-budget">最多 5 MB · 可随时停止</span></>}
+          {busy && <button className="button lab-stop" onClick={() => abort.current?.abort()}><Square size={12} />停止检测</button>}
+          <div className={`lab-phase ${busy ? "is-running" : ""}`} data-testid="network-phase" data-phase={busy || "idle"} role="status"><i />{busy ? PHASE_NAMES[busy] : view === "speed" ? speedStatus : connectionStatus}</div>
         </div>
-        {busy && <button className="button lab-stop" onClick={() => abort.current?.abort()}><Square size={12} />停止检测</button>}
-        <div className={`lab-phase ${busy ? "is-running" : ""}`} data-testid="network-phase" data-phase={busy || "idle"} role="status"><i />{busy ? PHASE_NAMES[busy] : connectionStatus}</div>
-      </div>
-      <ol className="lab-check-sequence" aria-label="检测顺序与结果">
-        {(["connection", "latency", "speed"] as const).map((phase, index) => {
-          const result = phaseResults[phase];
-          return <li key={phase} data-status={result?.status ?? "idle"}><span className="lab-step-number">{result?.status === "passed" ? <Check size={16} /> : index + 1}</span><div><h3>{["出口 IP", "连通与延迟", "下载速度"][index]}<span>{({ running: "进行中", passed: "已完成", error: "需检查", stopped: "已停止", idle: "待检测" })[result?.status ?? "idle"]}</span></h3><p>{result?.message ?? PHASE_GUIDES[phase]}</p></div></li>;
-        })}
-      </ol>
+      </>}
+      <div id="network-overview" hidden={view !== "overview"}>
       <div className="lab-identity">
         <div className="lab-ip-block"><span className="lab-label"><Globe2 size={14} />本站观测 IP <span className="lab-target">→ 当前网站</span></span><strong className={`lab-ip ${connection?.ip ? "has-data" : ""}`}>{connection?.ip ?? "—"}</strong><div className="lab-ip-meta"><span>{connection?.ipVersion ?? "IP"}</span><span>{ipAt ? `${ipAt} 快照` : "等待查询"}</span><button className="lab-copy-ip" aria-label={ipCopied ? "IP 已复制" : "复制当前 IP"} disabled={!connection?.ip} onClick={() => { if (connection?.ip) void navigator.clipboard.writeText(connection.ip).then(() => setIpCopied(true)).catch(() => record("无法访问剪贴板，可选中 IP 手动复制", "error")); }}>{ipCopied ? <Check size={12} /> : <Copy size={12} />}{ipCopied ? "已复制" : "复制"}</button></div></div>
         <dl className="lab-identity-details"><div><dt>地区 · 粗略定位</dt><dd>{location}</dd></div><div><dt>ASN / 网络组织</dt><dd>{organization}</dd></div><div className="lab-edge-row"><div><dt>边缘节点</dt><dd>{connection?.colo ?? "—"}</dd></div><div><dt>TLS</dt><dd>{connection?.tlsVersion ?? "—"}</dd></div></div></dl>
       </div>
-      {error && <div className="lab-alert" role="alert"><Info size={16} /><span>{error}</span></div>}
-      <div className="lab-measurement-grid">
-        <article className="lab-download-panel">
-          <div className="lab-panel-heading"><span className="lab-label"><ArrowDownToLine size={14} />下载数据流</span><span className="lab-target">Cloudflare Speed</span></div>
-          <div className="lab-rate-row">
-            <div><span className="lab-readout-label">{busy === "speed" ? "当前采样" : "样本均值"}</span><strong className={(busy === "speed" ? liveRate : speed) !== undefined ? "has-data" : ""}>{decimal(busy === "speed" ? liveRate : speed)}<em>Mbps</em></strong></div>
-            <div className="lab-download-count"><span data-testid="download-received" data-bytes={bytes}>{decimal(bytes / 1_000_000)}<small> / 5 MB</small></span><progress aria-label="下载接收进度" value={Math.min(bytes, SPEED_BYTES)} max={SPEED_BYTES} /></div>
-          </div>
-          <ThroughputChart samples={throughput} />
-          <div className="lab-download-summary"><span>实时 <b data-testid="throughput-live">{decimal(liveRate)}</b> Mbps</span><span>均值 <b data-testid="throughput-final">{decimal(speed)}</b> Mbps</span><time>{speedAt || sampleAt || "—"}</time></div>
-          <p className="lab-result-note">{speed === undefined ? "5 MB 有限样本 · 点击后接收" : "5 MB 样本吞吐量，非带宽上限"}</p>
-        </article>
+        {errors.overview && <div className="lab-alert" role="alert"><Info size={16} /><span>{errors.overview}</span></div>}
+        <div className="lab-overview-grid">
         <article className="lab-latency-panel">
           <div className="lab-panel-heading"><span className="lab-label"><Timer size={14} />HTTPS 请求延迟</span><span className="lab-sample-count">{samples.length}<small> / 3</small></span></div>
           <div className="lab-latency-main"><strong className={average !== undefined ? "has-data" : ""}>{average ?? "—"}<em>ms</em></strong><span>三次均值</span></div>
@@ -327,12 +331,38 @@ export default function NetworkPanel() {
           <div className="lab-latency-footer"><span>波动范围 <b>{jitter ?? "—"}</b> ms</span><time>{latencyAt || "—"}</time></div>
           <p className="lab-result-note">Cloudflare Speed · HTTPS</p>
         </article>
+          <section className="lab-connectivity-panel" aria-label="连通性进展">
+            <div className="lab-panel-heading"><span className="lab-label"><Activity size={16} />连通性进展</span><span className="lab-target">本次检测</span></div>
+            <ol className="lab-check-sequence" aria-label="检测顺序与结果">
+              {(["connection", "latency"] as const).map((phase, index) => {
+                const result = phaseResults[phase];
+                return <li key={phase} data-status={result?.status ?? "idle"}><span className="lab-step-number">{result?.status === "passed" ? <Check size={16} /> : index + 1}</span><div><h3>{["本站出口", "HTTPS 连通"][index]}<span>{({ running: "进行中", passed: "已完成", error: "需检查", stopped: "已停止", idle: "待检测" })[result?.status ?? "idle"]}</span></h3><p>{result?.message ?? PHASE_GUIDES[phase]}</p></div></li>;
+              })}
+            </ol>
+            <p className="lab-result-note">IP 与延迟目标可能走不同分流规则；这里的耗时不是 ICMP Ping，也无法定位到某个路由跳点。</p>
+          </section>
+        </div>
+        <div className="lab-next-actions" aria-label="继续检查"><button onClick={() => navigate("speed")}><ArrowDownToLine size={18} /><span><strong>继续测下载速度</strong><small>单独接收 5 MB 样本</small></span><ArrowUpRight size={16} /></button><button onClick={() => navigate("host")}><Search size={18} /><span><strong>查一个域名或 IP</strong><small>公共 DNS 记录与 TTL</small></span><ArrowUpRight size={16} /></button><button onClick={() => navigate("leaks")}><ShieldCheck size={18} /><span><strong>检查 DNS / IP 泄漏</strong><small>对照出口与解析路径</small></span><ArrowUpRight size={16} /></button></div>
+        {eventList("overview")}
+        <details className="lab-methods"><summary><Info size={14} />结果怎么理解</summary><div><p>本站 IP 是访问本网站时的出口快照，延迟请求发往 Cloudflare Speed；它们可能匹配不同分流规则。IP 没变化时，先检查本站是否设置为直连；延迟高或波动明显时，换节点再用同样方式对比。</p><p>地区和 ASN 是粗略网络信息，不能单独证明住宅、机房或 IP 信誉。“开始检测”只查询 IP 与 3 次 HTTPS 请求，不执行 5 MB 下载。对订阅里的各个节点逐个检测，请使用“订阅与节点”的本地检测器。</p></div></details>
       </div>
-      <div className="lab-bottom-grid">
-        <section className="lab-event-panel"><div className="lab-panel-heading"><span className="lab-label"><Activity size={14} />探测记录</span><span className="lab-target">本次会话</span></div><ol className="lab-event-list">{events.length ? events.map((event) => <li key={event.id} data-tone={event.tone}><time>{event.at}</time><i /><span>{event.text}</span></li>) : <li className="lab-event-empty"><time>—</time><span>等待第一条观测</span></li>}</ol></section>
-        <section className="lab-next-panel"><h3>有结果了，怎么看？</h3><p><strong>延迟大、波动明显：</strong>先换节点再用同样方式对比。测速正常但某个应用卡，去检查它的分流规则。</p><p><strong>IP 没变：</strong>检查当前网站是否被设为直连。本站和测速目标可能匹配不同规则。</p><button className="lab-text-button" onClick={() => setView("leaks")}>接着检查 DNS / IP 泄漏 <ArrowUpRight size={15} /></button></section>
-      </div>
-      <details className="lab-methods"><summary><Info size={14} />测量说明</summary><div><p>本站 IP 是当前网站请求的出口快照；下载与延迟请求发往 Cloudflare Speed，分流规则可能使它们使用不同出口。每项显示自己的测量时间。ASN 只表示网络组织，不能据此确定住宅、机房或 IP 信誉。</p><p>曲线来自实际收到的字节与时间，每 100 ms 至多更新一次，结束时补记最后一段。均值仅在完整收到 5 MB 后生成，包含请求等待时间；有限样本不能代表线路带宽上限。HTTPS 延迟包含连接及服务端处理，并非 ICMP ping。失败只反映当前目标，不能定位到某个路由跳点。</p><p>“开始探测”依次查询 IP、发出 3 次延迟请求并下载 5 MB；可随时停止。测速经代理时可能消耗套餐流量。订阅中每个节点的出口与质量，需要在“订阅与节点”使用本地检测器；网页不会自动切换小火箭节点。</p></div></details>
+      <div id="network-speed" hidden={view !== "speed"}>
+        {errors.speed && <div className="lab-alert" role="alert"><Info size={16} /><span>{errors.speed}</span></div>}
+        <div className="lab-speed-layout">
+        <article className="lab-download-panel">
+          <div className="lab-panel-heading"><span className="lab-label"><ArrowDownToLine size={14} />下载数据流</span><span className="lab-target">Cloudflare Speed</span></div>
+          <div className="lab-rate-row">
+            <div><span className="lab-readout-label">{busy === "speed" ? "当前采样" : "样本均值"}</span><strong className={(busy === "speed" ? liveRate : speed) !== undefined ? "has-data" : ""}>{decimal(busy === "speed" ? liveRate : speed)}<em>Mbps</em></strong><span className="lab-byte-rate">≈ {decimal((busy === "speed" ? liveRate : speed) === undefined ? undefined : (busy === "speed" ? liveRate! : speed!) / 8)} MB/s</span></div>
+            <div className="lab-download-count"><span data-testid="download-received" data-bytes={bytes}>{decimal(bytes / 1_000_000)}<small> / 5 MB</small></span><progress aria-label="下载接收进度" value={Math.min(bytes, SPEED_BYTES)} max={SPEED_BYTES} /></div>
+          </div>
+          <ThroughputChart samples={throughput} />
+          <div className="lab-download-summary"><span>实时 <b data-testid="throughput-live">{decimal(liveRate)}</b> Mbps</span><span>均值 <b data-testid="throughput-final">{decimal(speed)}</b> Mbps</span><time>{speedAt || sampleAt || "—"}</time></div>
+          <p className="lab-result-note">{speed === undefined ? "5 MB 有限样本 · 点击后接收" : "5 MB 样本吞吐量，非带宽上限"}</p>
+        </article>
+          <aside className="lab-speed-guide"><h3>数值怎么看</h3><p><strong>Mbps 是每秒兆比特。</strong>下方的 MB/s 是同一结果换算成的每秒兆字节：8 Mbps = 1 MB/s。</p><dl><div><dt>测试目标</dt><dd>Cloudflare Speed</dd></div><div><dt>样本大小</dt><dd>5,000,000 字节</dd></div><div><dt>完成条件</dt><dd>完整接收才生成均值</dd></div></dl><p>网络空闲时更易对比。切换节点后重新测速；切换分类或离开网络检查会停止当前请求。</p><button className="lab-text-button" onClick={() => navigate("overview")}>查看出口与延迟 <ArrowUpRight size={15} /></button></aside>
+        </div>
+        {eventList("speed")}
+        <details className="lab-methods"><summary><Info size={14} />测速范围与流量</summary><div><p>曲线由真实收到的字节与时间计算，每 100 ms 至多更新一次，结束时补记最后一段。平均吞吐量包含请求等待时间；5 MB 是有限样本，不能代表线路带宽上限，也不是上传速度。</p><p>经过代理时可能消耗套餐流量；测速不会在后台循环。停止或失败会保留已收到的样本，但不会生成完成均值。再次开始会清空本轮旧样本。</p></div></details>
       </div>
       <div id="network-host" hidden={view !== "host"} className="lab-host-view">
         <div className="lab-setup"><div><h2>主机解析，先确认地址对不对</h2><p>输入节点的服务器地址或网站域名，查看公共 DNS 的答复。输入公网 IP 会自动查询反向主机名。</p></div></div>
@@ -352,7 +382,7 @@ export default function NetworkPanel() {
       </div>
       <div id="network-leaks" hidden={view !== "leaks"} className="lab-leaks-view">
         <div className="lab-setup"><div><h2>泄漏检查，要对照结果才算完成</h2><p>先记下直连时的公网 IP 与运营商，再连接小火箭、选择要验证的节点，在同一个浏览器运行下面的检查。</p></div></div>
-        <div className="lab-leak-baseline"><Globe2 size={20} /><div><strong>本站最近一次观测：{connection?.ip ?? "尚未查询"}</strong><span>{ipAt ? `${ipAt} · ${location}` : "可在「当前连接」查询，再与外部测试的结果对照。"}</span></div><button className="button outline" onClick={() => setView("connection")}>查看当前连接</button></div>
+        <div className="lab-leak-baseline"><Globe2 size={20} /><div><strong>本站最近一次观测：{connection?.ip ?? "尚未查询"}</strong><span>{ipAt ? `${ipAt} · ${location}` : "可在「网络概览」查询，再与外部测试的结果对照。"}</span></div><button className="button outline" onClick={() => navigate("overview")}>查看当前连接</button></div>
         <div className="lab-leak-cards">
           <article><span className="lab-tool-type">DNS</span><h3>DNS 请求交给了谁？</h3><ol><li>打开测试站，运行 DNS 测试；dnsleaktest 可选择 Extended test。</li><li>查看 DNS 服务器列表，核对是否符合自己配置的解析服务。</li><li>若要求 DNS 也走代理，却出现直连运营商解析器，检查小火箭的 DNS 与分流设置。</li></ol><p>解析器与出口 IP 不同很常见；仅凭国家不同不能判断泄漏。浏览器安全 DNS 也可能改变结果。</p><div className="lab-leak-links"><a href="https://www.dnsleaktest.com/" target="_blank" rel="noreferrer">DNS 泄漏测试 <ArrowUpRight size={15} /></a><a href="https://browserleaks.com/dns" target="_blank" rel="noreferrer">交叉检查 DNS <ArrowUpRight size={15} /></a></div></article>
           <article><span className="lab-tool-type">WebRTC</span><h3>浏览器有没有暴露直连 IP？</h3><ol><li>连接代理后打开 WebRTC 测试。</li><li>对照 Remote IP 与 WebRTC Public IP，查看是否出现直连时的公网 IP。</li><li>如果直连公网 IP 仍被列出，再检查客户端 UDP 路由与浏览器 WebRTC 设置。</li></ol><p>本地私有地址或 .local 名称不能单独证明公网 IP 泄漏；WebRTC 不可用也不代表所有流量都受保护。</p><div className="lab-leak-links"><a href="https://browserleaks.com/webrtc" target="_blank" rel="noreferrer">WebRTC IP 暴露 <ArrowUpRight size={15} /></a></div></article>

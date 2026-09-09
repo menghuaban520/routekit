@@ -249,3 +249,56 @@
 @media (prefers-reduced-motion: reduce) {
   .network-lab *, .network-lab *::before, .network-lab *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* Each network category has its own working area and retained measurements. */
+.lab-sample-budget { color: var(--lab-muted); font-size: 13px; }
+.lab-overview-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 20px; }
+.lab-overview-grid > article, .lab-connectivity-panel { background: #fff; border: 1px solid var(--lab-line); border-radius: 10px; padding: 24px 26px; }
+.lab-overview-grid .lab-latency-main { margin-top: 20px; }
+.lab-overview-grid .lab-latency-plot { margin: 10px 0; }
+.lab-connectivity-panel { min-width: 0; }
+.lab-connectivity-panel .lab-check-sequence { display: grid; grid-template-columns: minmax(0, 1fr); border: 0; border-radius: 0; background: transparent; padding: 0; margin: 24px 0 20px; gap: 24px; }
+.lab-connectivity-panel .lab-check-sequence li { display: flex; flex-direction: row; gap: 13px; }
+.lab-connectivity-panel .lab-check-sequence h3 { flex-direction: row; align-items: center; gap: 12px; font-size: 14px; margin-bottom: 7px; }
+.lab-connectivity-panel .lab-check-sequence p { display: block; font-size: 13px; }
+.lab-next-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 20px 0; }
+.lab-next-actions button { display: flex; align-items: center; gap: 12px; text-align: left; background: #fff; border: 1px solid var(--lab-line); border-radius: 8px; padding: 16px; min-width: 0; }
+.lab-next-actions button:hover { background: #eef5ff; border-color: #bdd1f3; }
+.lab-next-actions button > svg { color: var(--lab-blue); flex-shrink: 0; }
+.lab-next-actions button > svg:last-child { margin-left: auto; }
+.lab-next-actions span { min-width: 0; }
+.lab-next-actions strong { display: block; font-size: 13px; font-weight: 500; }
+.lab-next-actions small { display: block; font-size: 12px; color: var(--lab-muted); margin-top: 4px; }
+.lab-records { border: 1px solid var(--lab-line); background: #fff; border-radius: 8px; padding: 0 18px; margin: 20px 0; }
+.lab-records summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; padding: 14px 0; list-style: none; }
+.lab-records summary::-webkit-details-marker { display: none; }
+.lab-records summary > svg { color: var(--lab-blue); }
+.lab-records summary > span { color: var(--lab-muted); font-size: 12px; margin-left: auto; }
+.lab-records summary::after { content: "+"; color: var(--lab-blue); margin-left: 9px; }
+.lab-records[open] summary::after { content: "−"; }
+.lab-records .lab-event-list { margin: 0 0 15px; }
+.lab-speed-layout { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(250px, 1fr); gap: 20px; }
+.lab-speed-layout .lab-download-panel { border: 1px solid var(--lab-line); border-radius: 10px; background: #fff; }
+.lab-speed-layout .lab-throughput-chart { height: 205px; }
+.lab-byte-rate { display: block; color: var(--lab-muted); font-size: 13px; margin-top: 9px; }
+.lab-speed-guide { padding: 24px; border: 1px solid var(--lab-line); border-radius: 10px; background: #fff; min-width: 0; }
+.lab-speed-guide h3 { font-size: 16px; }
+.lab-speed-guide p { color: var(--lab-muted); font-size: 13px; margin-top: 14px; }
+.lab-speed-guide p strong { font-weight: 500; color: #3d587d; }
+.lab-speed-guide dl { margin: 20px 0; padding: 15px 0; border-top: 1px solid var(--lab-line); border-bottom: 1px solid var(--lab-line); display: grid; gap: 13px; }
+.lab-speed-guide dl div { display: flex; gap: 15px; align-items: baseline; justify-content: space-between; }
+.lab-speed-guide dt { color: var(--lab-muted); font-size: 12px; flex-shrink: 0; }
+.lab-speed-guide dd { font-size: 12px; margin: 0; text-align: right; }
+@media (max-width: 900px) {
+  .lab-overview-grid, .lab-speed-layout { grid-template-columns: minmax(0, 1fr); }
+  .lab-speed-layout .lab-throughput-chart { height: 190px; }
+}
+@media (max-width: 600px) {
+  .lab-view-navigation { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .lab-view-navigation button { flex-direction: column; font-size: 12px; gap: 5px; padding: 10px 4px; }
+  .lab-overview-grid > article, .lab-connectivity-panel { padding: 22px 20px; }
+  .lab-next-actions { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .lab-next-actions button { padding: 14px 16px; }
+  .lab-speed-guide { padding: 22px 20px; }
+  .lab-sample-budget { font-size: 12px; }
+}

@@ -7,6 +7,7 @@ import type { Page } from "@playwright/test";
  * browser fetch, ReadableStream, AbortSignal and its own monotonic timestamps.
  * These deterministic checks are not measurements of the public speed service. */
 async function streamingDownload(page: Page) {
+  const allowedOrigin = new URL(String(test.info().project.use.baseURL)).origin;
   const responses: ServerResponse[] = [];
   const closed = new Set<number>();
   const server = createServer((request, response) => {
@@ -19,7 +20,7 @@ async function streamingDownload(page: Page) {
     response.on("close", () => closed.add(index));
     response.writeHead(200, {
       "Content-Type": "application/octet-stream",
-      "Access-Control-Allow-Origin": "http://127.0.0.1:4178",
+      "Access-Control-Allow-Origin": allowedOrigin,
       "Cache-Control": "no-store",
       "Content-Length": "5000000",
     });
@@ -80,6 +81,7 @@ test("network overview only measures on request and reports real response failur
 }) => {
   let ipRequests = 0;
   let latencyRequests = 0;
+  let downloadRequests = 0;
   await page.route("**/api/connection", (route) => {
     ipRequests++;
     return route.fulfill({
@@ -100,23 +102,29 @@ test("network overview only measures on request and reports real response failur
     });
   });
   await page.route("https://speed.cloudflare.com/**", (route) => {
-    latencyRequests++;
+    if (Number(new URL(route.request().url()).searchParams.get("bytes")) > 0) downloadRequests++;
+    else latencyRequests++;
     return route.fulfill({ status: 200, body: "" });
   });
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "网络检查", exact: true }),
+    page.getByRole("heading", { name: "网络概览", exact: true }),
   ).toBeVisible();
   expect(ipRequests).toBe(0);
   expect(latencyRequests).toBe(0);
-  await page.getByRole("button", { name: "查看当前 IP", exact: true }).click();
+  await expect(page.getByTestId("throughput-samples")).toBeHidden();
+  await page.getByRole("button", { name: "开始检测", exact: true }).click();
   await expect(page.getByText("198.51.100.23", { exact: true })).toBeVisible();
   await expect(
     page.getByText("AS64500 · Example network", { exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "测延迟与连通", exact: true }).click();
   await expect(page.getByText("HTTPS 连通正常", { exact: true })).toBeVisible();
   expect(latencyRequests).toBe(3);
+  expect(ipRequests).toBe(1);
+  expect(downloadRequests).toBe(0);
+  await page.getByRole("button", { name: /^继续测下载速度/ }).click();
+  await expect(page).toHaveURL(/view=network&tool=speed/);
+  await expect(page.locator(".lab-ip")).toBeHidden();
   await page.route("https://speed.cloudflare.com/**", (route) =>
     route.fulfill({ status: 503, body: "unavailable" }),
   );
@@ -131,6 +139,11 @@ test("network overview only measures on request and reports real response failur
   await expect(
     page.getByRole("link", { name: /DNS 泄漏测试/ }),
   ).toHaveAttribute("href", "https://www.dnsleaktest.com/");
+  await page.getByRole("button", { name: "查看当前连接", exact: true }).click();
+  await expect(page).toHaveURL(/view=network&tool=overview/);
+  await expect(page.getByText("198.51.100.23", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("latency-samples")).toHaveAttribute("data-sample-count", "3");
+  expect(ipRequests).toBe(1);
 });
 
 test("host queries are explicit and show real DNS records with actionable missing-answer results", async ({ page }) => {
@@ -183,17 +196,21 @@ test("host failure and cancellation do not imply connectivity or leak success", 
   await expect(page.getByRole("link", { name: "WebRTC IP 暴露", exact: true })).toHaveAttribute("href", "https://browserleaks.com/webrtc");
 });
 
-test("network subtabs fit a phone and keep readable labels", async ({ page }) => {
-  await page.setViewportSize({ width: 375, height: 812 });
-  await page.goto("/");
-  for (const name of ["当前连接", "主机查询", "泄漏检查"]) {
-    await page.getByRole("button", { name, exact: true }).click();
-    const width = await page.evaluate(() => ({ content: document.documentElement.scrollWidth, viewport: document.documentElement.clientWidth }));
-    expect(width.content, name).toBeLessThanOrEqual(width.viewport + 1);
-    const size = await page.getByRole("button", { name, exact: true }).evaluate((element) => parseFloat(getComputedStyle(element).fontSize));
-    expect(size).toBeGreaterThanOrEqual(12);
-  }
-});
+for (const viewportWidth of [375, 480]) {
+  test(`network categories fit ${viewportWidth}px and show only their selected tool`, async ({ page }) => {
+    await page.setViewportSize({ width: viewportWidth, height: 755 });
+    await page.goto("/?view=network&tool=overview");
+    for (const [name, section] of [["网络概览", "overview"], ["速度测试", "speed"], ["主机查询", "host"], ["泄漏检查", "leaks"]]) {
+      await page.getByRole("button", { name, exact: true }).click();
+      await expect(page.locator(`#network-${section}`)).toBeVisible();
+      for (const other of ["overview", "speed", "host", "leaks"].filter(value => value !== section)) await expect(page.locator(`#network-${other}`)).toBeHidden();
+      const width = await page.evaluate(() => ({ content: document.documentElement.scrollWidth, viewport: document.documentElement.clientWidth }));
+      expect(width.content, name).toBeLessThanOrEqual(width.viewport + 1);
+      const size = await page.getByRole("button", { name, exact: true }).evaluate((element) => parseFloat(getComputedStyle(element).fontSize));
+      expect(size).toBeGreaterThanOrEqual(12);
+    }
+  });
+}
 
 test("speed requires full bounded response before showing a value", async ({
   page,
@@ -201,7 +218,7 @@ test("speed requires full bounded response before showing a value", async ({
   await page.route("https://speed.cloudflare.com/**", (route) =>
     route.fulfill({ status: 200, body: Buffer.alloc(5_000_000) }),
   );
-  await page.goto("/");
+  await page.goto("/?view=network&tool=speed");
   await page
     .getByRole("button", { name: "下载测速 · 5 MB", exact: true })
     .click();
@@ -209,6 +226,10 @@ test("speed requires full bounded response before showing a value", async ({
     page.getByText("5 MB 样本吞吐量，非带宽上限", { exact: true }),
   ).toBeVisible();
   await expect(page.getByText("下载连通正常", { exact: true })).toBeVisible();
+  const megabits = Number(await page.getByTestId("throughput-final").textContent());
+  const megabytes = Number((await page.locator(".lab-byte-rate").textContent())?.match(/[\d.]+/)?.[0]);
+  expect(megabits).toBeGreaterThan(0);
+  expect(Math.abs(megabytes * 8 - megabits)).toBeLessThanOrEqual(0.05);
   await page.route("https://speed.cloudflare.com/**", (route) =>
     route.fulfill({ status: 200, body: "partial" }),
   );
@@ -280,7 +301,7 @@ test("streamed measurements update from arriving bytes, stop cleanly and restart
 }) => {
   const fixture = await streamingDownload(page);
   try {
-    await page.goto("/");
+    await page.goto("/?view=network&tool=speed");
     expect(fixture.responses).toHaveLength(0);
     const download = page.getByRole("button", {
       name: "下载测速 · 5 MB",
@@ -343,7 +364,7 @@ test("reduced motion disables presentation animations while streamed data still 
   await page.emulateMedia({ reducedMotion: "reduce" });
   const fixture = await streamingDownload(page);
   try {
-    await page.goto("/");
+    await page.goto("/?view=network&tool=speed");
     expect(fixture.responses).toHaveLength(0);
     await page
       .getByRole("button", { name: "下载测速 · 5 MB", exact: true })
@@ -369,4 +390,35 @@ test("reduced motion disables presentation animations while streamed data still 
   } finally {
     await fixture.dispose();
   }
+});
+
+
+test("switching categories and leaving the workspace abort active downloads while keeping received samples", async ({ page }) => {
+  const fixture = await streamingDownload(page);
+  try {
+    await page.goto("/?view=network&tool=speed");
+    const download = page.getByRole("button", { name: "下载测速 · 5 MB", exact: true });
+    await download.click();
+    await fixture.emit(0, 100_000);
+    await expect(page.getByTestId("download-received")).toHaveAttribute("data-bytes", "100000");
+    await page.getByRole("button", { name: "查看出口与延迟", exact: true }).click();
+    await expect.poll(() => fixture.closed.has(0)).toBe(true);
+    await expect(page).toHaveURL(/view=network&tool=overview/);
+    await expect(page.getByTestId("throughput-samples")).toBeHidden();
+    await page.getByRole("button", { name: "速度测试", exact: true }).click();
+    await expect(page.getByTestId("network-phase")).toHaveAttribute("data-phase", "idle");
+    await expect(page.getByTestId("download-received")).toHaveAttribute("data-bytes", "100000");
+    await expect(page.getByTestId("throughput-final")).toHaveText("—");
+    await download.click();
+    await expect(page.getByTestId("download-received")).toHaveAttribute("data-bytes", "0");
+    await fixture.emit(1, 150_000);
+    await expect(page.getByTestId("download-received")).toHaveAttribute("data-bytes", "150000");
+    await page.getByRole("button", { name: "订阅与节点", exact: true }).click();
+    await expect.poll(() => fixture.closed.has(1)).toBe(true);
+    await page.getByRole("button", { name: "网络检查", exact: true }).click();
+    await page.getByRole("button", { name: "速度测试", exact: true }).click();
+    await expect(page.getByTestId("download-received")).toHaveAttribute("data-bytes", "150000");
+    await expect(page.getByTestId("throughput-final")).toHaveText("—");
+    expect(fixture.responses).toHaveLength(2);
+  } finally { await fixture.dispose(); }
 });

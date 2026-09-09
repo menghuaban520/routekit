@@ -1,12 +1,12 @@
 # 本地节点检测器
 
-`public/routekit_probe.py` 用你电脑上已有的 mihomo 核心逐个连接节点，再从该节点发出 HTTPS 检测请求。网页把选中的节点生成私人任务文件，RouteKit 服务器不接收节点密码；浏览器不能自行切换任意代理协议，真实节点检测在本机执行。
+`public/routekit_probe.py` 用你电脑上已有的 mihomo 核心逐个连接节点，再从该节点发出 HTTPS 检测请求。网页可通过[本地助手](monitor.md)直接提交任务并显示进度，也可生成私人任务文件离线执行。RouteKit 服务器不接收节点密码；浏览器不能自行切换任意代理协议，真实节点检测在本机执行。
 
-这是批量检测工具。若只想看已经运行的 Mihomo 的上下行与代理链路，使用[实时监测器](monitor.md)；它不启动核心或做测速。Shadowrocket 实时流量在小火箭客户端内查看，两个 Python 工具都不是小火箭 API。
+本页记录手动文件流程，网页一键检测优先使用[本地助手](monitor.md)。助手的实时流量功能只读取已有 Mihomo，批量检测功能才启动隔离核心。Shadowrocket 实时流量在小火箭客户端内查看，两个 Python 工具都不是小火箭 API。
 
 需要 Python 3.10 或更新版本，以及可单独运行的 [mihomo 官方核心](https://github.com/MetaCubeX/mihomo/releases)。Python 脚本仅使用标准库，不安装依赖、不下载核心、不修改系统代理或 TUN。RouteKit 脚本采用 MIT；mihomo 独立发行并使用其自己的 [GPL-3.0 许可证](https://github.com/MetaCubeX/mihomo/blob/Meta/LICENSE)，本仓库不附带核心二进制。
 
-## 使用
+## 手动文件方式
 
 1. 在 RouteKit 节点页面导入节点并导出检测任务 JSON，再下载本地检测脚本。
 2. 在终端运行下面的命令；将文件位置替换为你的实际路径。

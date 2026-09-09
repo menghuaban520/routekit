@@ -2153,3 +2153,107 @@ input:not([type="checkbox"]):not([type="radio"]), select { min-height: 42px; }
 @media (max-width: 600px) { .header-inner { padding: 15px 16px 0; } .brand strong { font-size: 22px; } .brand > span { display: none; } .header-inner nav[aria-label="帮助与项目"] .text-button { width: 34px; min-height: 34px; padding: 6px; } .header-inner nav[aria-label="帮助与项目"] .text-button span { display: none; } .site-header .workspace-navigation { gap: 3px; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); } .site-header .workspace-navigation button { font-size: 12px; gap: 4px; padding: 9px 1px; min-width: 0; } .site-header .workspace-navigation button svg { width: 14px; } .page { padding: 23px 16px 32px; } .intro { display: block; margin-bottom: 20px; } .intro h1 { font-size: 25px; } .intro p { font-size: 14px; } .mode-switch { margin-top: 15px; max-width: 245px; } .mode-switch button { font-size: 13px; min-height: 36px; } .workflow-steps { grid-template-columns: 1fr 1fr; gap: 12px 5px; padding: 13px 8px; } .workflow-steps button { gap: 8px; padding: 0 4px; } .workflow-steps button > b { width: 27px; height: 27px; font-size: 13px; } .workflow-steps strong { font-size: 13px; } .workflow-steps small { font-size: 12px; } .workflow-steps button > svg { display: none; } .editor-body { padding: 18px 15px; } .section-heading h2 { font-size: 18px; } .section-heading p { font-size: 13px; } .app-row { grid-template-columns: 32px minmax(0,1fr) 26px; gap: 9px; padding: 15px 0; } .app-avatar { width: 32px; height: 32px; font-size: 18px; } .app-details { grid-column: 2; grid-row: 1; } .app-details strong { font-size: 14px; } .app-details small { font-size: 12px; } .app-routing-controls { grid-column: 2/-1; grid-row: 2; justify-content: flex-start; max-width: none; flex-wrap: wrap; } .app-node-select { flex: 1; min-width: 118px; width: auto; } .app-node-select select { max-width: none; } .app-row .delete-app { grid-column: 3; grid-row: 1; } .app-row > .app-avatar { grid-row: 1; } .policy-control > button { min-width: 40px; padding: 5px 7px; } .default-node-setting { align-items: center; flex-wrap: wrap; gap: 5px; } .default-node-setting label { flex-basis: 180px; } .default-node-setting .text-button { font-size: 12px; } .tabs { gap: 1px; padding: 7px 5px; } .tabs > button { font-size: 12px; padding: 9px 4px; min-height: 42px; } .preview-panel { padding: 18px 15px; } .site-footer { margin: 0 16px; font-size: 12px; } }
 
 .preview-panel > .code-window { margin-top: 20px; }
+
+/* Each tool has its own destination; groups remain compact on small screens. */
+.header-inner { padding-top: 23px; padding-bottom: 18px; }
+.site-header .workspace-navigation {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 19px;
+  margin-top: 25px;
+  padding: 0 0 12px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.workspace-group { min-width: 0; }
+.site-header .workspace-navigation .nav-group-button {
+  width: 100%;
+  min-height: 32px;
+  padding: 5px 9px;
+  gap: 8px;
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.nav-group-items { display: grid; gap: 3px; margin-top: 4px; }
+.site-header .workspace-navigation .nav-group-items button {
+  min-height: 36px;
+  width: 100%;
+  padding: 7px 10px;
+  gap: 9px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.nav-group-items small {
+  margin-left: auto;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--tint);
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.header-inner nav[aria-label="帮助与项目"] {
+  padding-top: 16px;
+  gap: 8px;
+  flex-shrink: 0;
+}
+@media (max-width: 1100px) {
+  .header-inner { padding: 18px 28px 0; }
+  .site-header .workspace-navigation {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0 8px;
+    margin: 16px 0 0;
+    padding: 0;
+    overflow: visible;
+  }
+  .workspace-group { display: contents; }
+  .site-header .workspace-navigation .nav-group-button {
+    justify-content: center;
+    min-height: 39px;
+    font-size: 14px;
+    border-radius: 6px 6px 0 0;
+  }
+  .workspace-group[data-active="true"] .nav-group-button {
+    color: var(--accent);
+    background: var(--tint);
+  }
+  .nav-group-items {
+    display: none;
+    grid-column: 1 / -1;
+    order: 1;
+    margin: 0;
+    padding: 9px 0;
+    border-top: 1px solid var(--line);
+  }
+  .workspace-group[data-active="true"] .nav-group-items {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 5px;
+  }
+  .site-header .workspace-navigation .nav-group-items button {
+    justify-content: center;
+    font-size: 13px;
+    padding: 7px 5px;
+  }
+  .nav-group-items small { margin-left: 0; }
+  .header-inner nav[aria-label="帮助与项目"] { padding: 0; }
+}
+@media (max-width: 600px) {
+  .header-inner { padding: 15px 16px 0; }
+  .site-header .workspace-navigation { margin-top: 13px; gap: 0 4px; }
+  .site-header .workspace-navigation .nav-group-button { font-size: 13px; gap: 5px; }
+  .workspace-group[data-active="true"] .nav-group-items {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .site-header .workspace-navigation .nav-group-items button {
+    min-height: 35px;
+    font-size: 12px;
+    gap: 5px;
+  }
+  .site-header .workspace-navigation .nav-group-items button svg { width: 14px; }
+}

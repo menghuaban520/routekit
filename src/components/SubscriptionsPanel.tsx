@@ -47,6 +47,7 @@ import {
   type SubscriptionUsage,
 } from "../core/subscription-usage";
 import "./subscriptions-ui.css";
+import { assistantJobActive, associateAssistantResults, cancelAssistantJob, getAssistantCapabilities, readAssistantJob, startAssistantJob, type AssistantCapabilities, type AssistantJob } from "../core/local-assistant";
 
 type ImportMode = "append" | "replace";
 type NodeMeasurement = { result: ProbeResult; generatedAt: string };
@@ -117,7 +118,11 @@ type SubscriptionsPanelProps = {
   nodes: ProxyNode[];
   onNodesChange: (nodes: ProxyNode[]) => void;
   onConfigureNodes: (nodeId?: string) => void;
+  section?: SubscriptionSection;
+  onSectionChange?: (section: SubscriptionSection) => void;
 };
+export type SubscriptionSection = "import" | "usage" | "library" | "probe" | "live";
+const SECTION_LABELS: Record<SubscriptionSection, string> = { import: "导入订阅", usage: "套餐用量", library: "节点列表", probe: "批量实测", live: "实时流量" };
 type LiveChain = { name: string; connections: number; uploadedBytes: number; downloadedBytes: number; uploadBytesPerSecond?: number; downloadBytesPerSecond?: number };
 type LiveSnapshot = { source: "mihomo"; observedAt: string; uploadBytesPerSecond: number; downloadBytesPerSecond: number; uploadedBytes: number; downloadedBytes: number; chains: LiveChain[] };
 function readLiveSnapshot(value: unknown): LiveSnapshot {
@@ -191,7 +196,10 @@ function dateLabel(value: string): string {
   return new Date(value).toLocaleString("zh-CN", { hour12: false });
 }
 
-export default function SubscriptionsPanel({ active, nodes, onNodesChange, onConfigureNodes }: SubscriptionsPanelProps) {
+export default function SubscriptionsPanel({ active, nodes, onNodesChange, onConfigureNodes, section, onSectionChange }: SubscriptionsPanelProps) {
+  const [localSection, setLocalSection] = useState<SubscriptionSection>("import");
+  const currentSection = section ?? localSection;
+  function changeSection(next: SubscriptionSection) { setLocalSection(next); onSectionChange?.(next); }
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [measurements, setMeasurements] = useState<
     Record<string, NodeMeasurement>
@@ -222,6 +230,28 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
   const [fetchedSource, setFetchedSource] = useState("");
   const [refreshError, setRefreshError] = useState("");
   const [monitorToken, setMonitorToken] = useState("");
+  const [helperCapabilities, setHelperCapabilities] = useState<AssistantCapabilities>();
+  const [helperConnecting, setHelperConnecting] = useState(false);
+  const [helperOpen, setHelperOpen] = useState(false);
+  const [helperError, setHelperError] = useState("");
+  const [autoProbe, setAutoProbe] = useState(true);
+  const [probeRunning, setProbeRunning] = useState(false);
+  const [probeJob, setProbeJob] = useState<AssistantJob>();
+  const [probeError, setProbeError] = useState("");
+  const [queuePaused, setQueuePaused] = useState(false);
+  const [probeProgress, setProbeProgress] = useState({ total: 0, completed: 0 });
+  const [pendingProbeIds, setPendingProbeIds] = useState<Set<string>>(new Set());
+  const probeQueue = useRef<{ nodes: ProxyNode[]; speedTest: boolean }[]>([]);
+  const probeInputs = useRef(new Map<string, ProxyNode[]>());
+  const probeOffsets = useRef(new Map<string, number>());
+  const probeSpeedOptions = useRef(new Map<string, boolean>());
+  const pendingSubmission = useRef(false);
+  const probeController = useRef<AbortController | undefined>(undefined);
+  const helperController = useRef<AbortController | undefined>(undefined);
+  const runnerActive = useRef(false);
+  const cancellationRequested = useRef(false);
+  const currentJobRef = useRef<AssistantJob | undefined>(undefined);
+  const aggregateProgress = useRef({ total: 0, completed: 0 });
   const [monitorRunning, setMonitorRunning] = useState(false);
   const [monitorError, setMonitorError] = useState("");
   const [liveSnapshot, setLiveSnapshot] = useState<LiveSnapshot>();
@@ -235,14 +265,14 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
   const abort = useRef<AbortController | null>(null);
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
-  useEffect(() => () => abort.current?.abort(), []);
+  useEffect(() => () => { abort.current?.abort(); helperController.current?.abort(); probeController.current?.abort(); }, []);
   useEffect(() => {
     const pause = () => { if (document.hidden) setMonitorRunning(false); };
     document.addEventListener("visibilitychange", pause);
     return () => document.removeEventListener("visibilitychange", pause);
   }, []);
   useEffect(() => {
-    if (!active) { setMonitorRunning(false); return; }
+    if (!active || currentSection !== "live") { setMonitorRunning(false); return; }
     if (!monitorRunning) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -267,7 +297,7 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
     }
     void sample();
     return () => { stopped = true; controller.abort(); clearTimeout(timer); };
-  }, [active, monitorRunning, monitorToken]);
+  }, [active, currentSection, monitorRunning, monitorToken]);
 
   const origin = useMemo<Coordinates | undefined>(() => {
     if (originId !== "custom")
@@ -321,6 +351,182 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
   }, [filtered, selected, allVisibleSelected]);
   const measuredCount = nodes.filter((item) => measurements[item.id]).length;
 
+  const helperFailure = (error: unknown) => error instanceof TypeError || (error instanceof DOMException && error.name === "AbortError")
+    ? "没有连上本地助手。请把两个文件放在同一目录，运行本地助手，核对会话令牌，并允许浏览器访问本地网络。"
+    : error instanceof Error ? error.message : "本地助手请求失败";
+
+  async function helperCall<T>(operation: (signal: AbortSignal) => Promise<T>, parentSignal?: AbortSignal): Promise<T> {
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    parentSignal?.addEventListener("abort", stop, { once: true });
+    if (parentSignal?.aborted) controller.abort();
+    const timeout = setTimeout(stop, 15000);
+    try { return await operation(controller.signal); }
+    finally { clearTimeout(timeout); parentSignal?.removeEventListener("abort", stop); }
+  }
+
+  async function connectHelper() {
+    if (!monitorToken.trim() || helperConnecting) return;
+    const controller = new AbortController();
+    helperController.current = controller;
+    setHelperConnecting(true); setHelperError("");
+    try {
+      const capabilities = await helperCall(signal => getAssistantCapabilities(monitorToken, signal), controller.signal);
+      if (controller.signal.aborted) return;
+      setHelperCapabilities(capabilities); setHelperOpen(false);
+      if (queuePaused && !runnerActive.current) {
+        const retained = capabilities.currentJob;
+        if (!capabilities.probe.available) { setHelperOpen(true); return; }
+        if (pendingSubmission.current && retained && !probeInputs.current.has(retained.id)) {
+          currentJobRef.current = retained; setProbeJob(retained);
+          setHelperError(`上次提交的响应丢失，无法确认助手任务是否属于这批节点。保留的 ${probeQueue.current.reduce((sum, batch) => sum + batch.nodes.length, 0)} 个节点未重新提交；先在批量实测查看任务，待任务结束后可明确重试。`);
+          return;
+        }
+        pendingSubmission.current = false;
+        if (retained && probeInputs.current.has(retained.id)) {
+          if (retained.status === "failed" || retained.status === "cancelled") {
+            updateProbeJob(retained, probeOffsets.current.get(retained.id) ?? 0);
+            setProbeError("助手中的这一批已停止。已完成结果和剩余队列保留，可重试未完成节点。");
+            return;
+          }
+          void runProbeQueue(retained, cancellationRequested.current);
+        } else if (!retained) { setProbeError("助手已重启，当前任务不可恢复。保留的节点与队列还在，可重试未完成节点。"); }
+        else void runProbeQueue();
+        return;
+      }
+      if (capabilities.currentJob && !runnerActive.current) {
+        cancellationRequested.current = false;
+        aggregateProgress.current = { total: capabilities.currentJob.total, completed: 0 };
+        setProbeProgress(aggregateProgress.current);
+        if (!probeInputs.current.has(capabilities.currentJob.id)) setMessage("助手保留了先前任务。当前会话没有原节点凭证，结果可在批量实测中查看，不会套用到新节点。");
+        if (assistantJobActive(capabilities.currentJob)) void runProbeQueue(capabilities.currentJob);
+        else { updateProbeJob(capabilities.currentJob, 0); aggregateProgress.current.completed = capabilities.currentJob.completed; setProbeError(capabilities.currentJob.status === "failed" ? capabilities.currentJob.error ?? "上次检测失败，已完成结果保留。" : ""); }
+      }
+    } catch (error) { if (!controller.signal.aborted) { setHelperError(helperFailure(error)); setHelperCapabilities(undefined); } }
+    finally { if (!controller.signal.aborted) setHelperConnecting(false); }
+  }
+
+  function updateProbeJob(job: AssistantJob, completedBefore: number) {
+    currentJobRef.current = job; setProbeJob(job);
+    const inputs = probeInputs.current.get(job.id) ?? [];
+    const parsed = associateAssistantResults(job.report, inputs, nodesRef.current);
+    setMeasurements(previous => ({ ...previous, ...Object.fromEntries(parsed.results.map(result => [result.nodeId, { result, generatedAt: parsed.generatedAt }])) }));
+    setPendingProbeIds(previous => { const next = new Set(previous); for (const result of job.report.results) next.delete(result.nodeId); return next; });
+    setProbeProgress({ total: aggregateProgress.current.total, completed: completedBefore + job.completed });
+    if (parsed.skipped) setMessage(`${parsed.skipped} 个节点已变更或删除，对应旧检测结果已跳过。`);
+  }
+
+  async function pollProbeJob(initial: AssistantJob, completedBefore: number, signal: AbortSignal) {
+    let job = initial;
+    updateProbeJob(job, completedBefore);
+    while (assistantJobActive(job) && !signal.aborted) {
+      if (cancellationRequested.current && job.status === "running") {
+        job = await helperCall(requestSignal => cancelAssistantJob(monitorToken, job.id, requestSignal), signal);
+        updateProbeJob(job, completedBefore);
+      }
+      if (!assistantJobActive(job)) break;
+      await new Promise<void>(resolve => { const finish = () => { clearTimeout(timer); signal.removeEventListener("abort", finish); resolve(); }; const timer = setTimeout(finish, 900); signal.addEventListener("abort", finish, { once: true }); });
+      if (signal.aborted) break;
+      job = await helperCall(requestSignal => readAssistantJob(monitorToken, job.id, requestSignal), signal);
+      updateProbeJob(job, completedBefore);
+    }
+    return job;
+  }
+
+  async function runProbeQueue(existing?: AssistantJob, continueCancellation = false) {
+    if (runnerActive.current) return;
+    runnerActive.current = true; cancellationRequested.current = continueCancellation;
+    const controller = new AbortController(); probeController.current = controller;
+    setProbeRunning(true); setProbeError(""); setQueuePaused(false);
+    let interrupted = false;
+    try {
+      if (existing) {
+        const offset = probeOffsets.current.get(existing.id) ?? 0;
+        const result = await pollProbeJob(existing, offset, controller.signal);
+        aggregateProgress.current.completed = offset + result.completed;
+        if (result.status === "failed") throw new Error(result.error ?? "本地检测任务失败");
+        if (result.status === "cancelled") cancellationRequested.current = true;
+      }
+      while (probeQueue.current.length && !controller.signal.aborted && !cancellationRequested.current) {
+        const batch = probeQueue.current[0];
+        const current = new Map(nodesRef.current.map(node => [node.id, proxyNodeIdentity(node)]));
+        const validNodes = batch.nodes.filter(node => current.get(node.id) === proxyNodeIdentity(node));
+        aggregateProgress.current.completed += batch.nodes.length - validNodes.length;
+        if (!validNodes.length) { probeQueue.current.shift(); continue; }
+        batch.nodes = validNodes;
+        pendingSubmission.current = true;
+        const job = await helperCall(signal => startAssistantJob(monitorToken, { version: 1, nodes: validNodes, options: { speedTest: batch.speedTest, downloadBytes: 5_000_000, timeoutSeconds: 10 } }, signal), controller.signal);
+        pendingSubmission.current = false;
+        probeQueue.current.shift();
+        probeInputs.current.set(job.id, validNodes);
+        probeOffsets.current.set(job.id, aggregateProgress.current.completed);
+        probeSpeedOptions.current.set(job.id, batch.speedTest);
+        const result = await pollProbeJob(job, aggregateProgress.current.completed, controller.signal);
+        aggregateProgress.current.completed += result.completed;
+        if (result.status === "failed") throw new Error(result.error ?? "本地检测任务失败，已保留完成的结果");
+        if (result.status === "cancelled") { cancellationRequested.current = true; break; }
+      }
+      if (!controller.signal.aborted) {
+        setProbeProgress({ ...aggregateProgress.current });
+        setSort("latency");
+        setMessage(cancellationRequested.current ? "检测已取消，已完成的结果保留。" : "批量检测已完成，可按实测延迟或下载速度排序并用于分流。");
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        interrupted = true; setQueuePaused(true);
+        const queued = probeQueue.current.reduce((sum, batch) => sum + batch.nodes.length, 0);
+        setProbeError(`${helperFailure(error)} 已完成结果与 ${queued} 个未提交节点保留；重新连接助手后继续本次队列。`);
+        setHelperCapabilities(undefined);
+      }
+    } finally {
+      if (!interrupted) probeQueue.current = [];
+      runnerActive.current = false;
+      if (!controller.signal.aborted) { setProbeRunning(false); if (!interrupted) setPendingProbeIds(new Set()); }
+    }
+  }
+
+  function enqueueProbe(targets: ProxyNode[]) {
+    if (queuePaused) { setHelperOpen(true); setHelperError("上一轮检测队列尚未完成，请先重新连接继续或明确重试保留的节点。"); return; }
+    if (!helperCapabilities?.probe.available) { setHelperOpen(true); setHelperError(helperCapabilities?.probe.reason ?? "先连接本地助手，再执行节点批量检测。"); return; }
+    if (!targets.length) return;
+    if (!runnerActive.current) { aggregateProgress.current = { total: 0, completed: 0 }; probeInputs.current.clear(); probeOffsets.current.clear(); probeSpeedOptions.current.clear(); setProbeJob(undefined); currentJobRef.current = undefined; }
+    const chunkSize = helperCapabilities.probe.maxNodes;
+    for (let start = 0; start < targets.length; start += chunkSize) probeQueue.current.push({ nodes: structuredClone(targets.slice(start, start + chunkSize)), speedTest });
+    aggregateProgress.current.total += targets.length;
+    setProbeProgress({ ...aggregateProgress.current });
+    setPendingProbeIds(previous => new Set([...previous, ...targets.map(node => node.id)]));
+    setMeasurements(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => !targets.some(node => node.id === id))));
+    setProbeError(""); setSort("latency");
+    void runProbeQueue();
+  }
+
+  function importedNodesReady(next: ProxyNode[], incoming: ProxyNode[]) {
+    const identities = new Set(incoming.map(proxyNodeIdentity));
+    const imported = next.filter(node => identities.has(proxyNodeIdentity(node)));
+    if (autoProbe && helperCapabilities?.probe.available) enqueueProbe(imported);
+    changeSection("library");
+  }
+
+  function requestProbeCancellation() {
+    cancellationRequested.current = true; probeQueue.current = [];
+    setMessage("正在取消检测；本地助手完成清理后会停止。已完成结果保留。");
+  }
+
+  function retryRetainedQueue() {
+    if (!helperCapabilities?.probe.available) { setHelperOpen(true); return; }
+    if (assistantJobActive(helperCapabilities.currentJob)) { setHelperError("助手当前任务仍在运行。请先重新连接更新任务状态，避免重复检测。"); return; }
+    const previous = currentJobRef.current;
+    if (previous && probeInputs.current.has(previous.id) && !pendingSubmission.current) {
+      const finished = new Set(previous.report.results.map(result => result.nodeId));
+      const queuedIds = new Set(probeQueue.current.flatMap(batch => batch.nodes.map(node => node.id)));
+      const remaining = probeInputs.current.get(previous.id)!.filter(node => !finished.has(node.id) && !queuedIds.has(node.id));
+      if (remaining.length) probeQueue.current.unshift({ nodes: remaining, speedTest: probeSpeedOptions.current.get(previous.id) ?? false });
+      aggregateProgress.current.completed = (probeOffsets.current.get(previous.id) ?? 0) + previous.completed;
+    }
+    pendingSubmission.current = false;
+    void runProbeQueue();
+  }
+
   function setNodes(next: ProxyNode[]) {
     nodesRef.current = next;
     onNodesChange(next);
@@ -331,7 +537,7 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
     setMeasurements((previous) => Object.fromEntries(Object.entries(previous).filter(([id]) => ids.has(id))));
   }
 
-  function addParsed(parsed: SubscriptionResult, importMode: ImportMode) {
+  function addParsed(parsed: SubscriptionResult, importMode: ImportMode, continueWorkflow = true) {
     setMessage("");
     if (!parsed.nodes.length) {
       setNotice({
@@ -352,6 +558,7 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
         errors: parsed.errors,
         warnings: parsed.warnings,
       });
+      if (continueWorkflow) importedNodesReady(next, parsed.nodes);
       return next;
     }
     const currentNodes = nodesRef.current;
@@ -387,6 +594,7 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
       ],
       warnings: parsed.warnings,
     });
+    if (continueWorkflow) importedNodesReady(next, parsed.nodes);
     return next;
   }
 
@@ -463,7 +671,7 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
         setSelected((selectedIds) => new Set(next.filter((item) => selectedIds.has(item.id) || !currentNodes.some((old) => old.id === item.id)).map((item) => item.id)));
         setNotice({ title: `订阅已刷新 · 当前共 ${next.length} 个节点`, errors: [...parsed.errors, ...(overflow ? [`另有 ${overflow} 个节点超出 500 个上限`] : [])], warnings: parsed.warnings });
       } else {
-        next = addParsed(parsed, mode)!;
+        next = addParsed(parsed, mode, false)!;
         const beforeIds = new Set(currentNodes.map((item) => item.id));
         ownedIds = new Set(next.filter((item) => mode === "replace" || !beforeIds.has(item.id)).map((item) => item.id));
       }
@@ -474,6 +682,7 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
       setFetchedSource(
         `${redactSubscriptionUrl(requestedUrl)} · ${new Date().toLocaleTimeString("zh-CN")}`,
       );
+      if (!refresh) importedNodesReady(next, parsed.nodes);
     } catch (error) {
       const explanation = controller.signal.aborted
         ? "读取已取消或超过 15 秒。你可以下载订阅 .txt 文件，再从本地导入。"
@@ -600,6 +809,7 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
       setMessage(
         "可按实测延迟或速度排序。结果来自你导入的文件，RouteKit 未重新执行检测。",
       );
+      changeSection("library");
     } catch (error) {
       setNotice({
         title: "检测结果未导入",
@@ -633,25 +843,32 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
 
   return (
     <section className="subscriptions-panel" aria-label="节点与订阅工作台">
-      <div className="section-heading subscriptions-heading">
-        <div>
-          <h2>连接你的节点</h2>
-          <p>导入订阅，把每个应用交给合适的节点。</p>
-        </div>
-        <span className="subscriptions-local">
-          <ShieldCheck size={16} />
-          仅在当前会话
-        </span>
+      {!section && <nav className="subscriptions-jump" aria-label="订阅工作台区段">
+        {(Object.keys(SECTION_LABELS) as SubscriptionSection[]).map((item) => <button type="button" key={item} aria-current={currentSection === item ? "page" : undefined} onClick={() => changeSection(item)}>{SECTION_LABELS[item]}{item === "library" && nodes.length ? ` · ${nodes.length}` : ""}</button>)}
+      </nav>}
+      <div className="subscriptions-assistant">
+        <div className="subscriptions-assistant-status"><ShieldCheck size={19} /><div><strong>本地助手</strong><span>{helperConnecting ? "正在连接" : helperCapabilities ? helperCapabilities.probe.available ? "已连接 · 批量检测与实时流量可用" : "已连接 · 批量检测尚未就绪" : "未连接 · 导入与分流仍可使用"}</span></div><button type="button" className="button outline compact" onClick={() => setHelperOpen(!helperOpen)} aria-expanded={helperOpen}>{helperCapabilities ? "连接设置" : "连接本地助手"}</button></div>
+        {helperOpen && <div className="subscriptions-assistant-setup">
+          <p>需要 Python 3.10+ 和本机 Mihomo / Clash Verge。</p><ol><li><a href="/routekit_monitor.py" download>下载本地助手</a> 和 <a href="/routekit_probe.py" download>下载检测模块</a>，放在同一个文件夹。</li><li>已有 Mihomo / Clash Verge 时可先运行 <code>python3 routekit_monitor.py</code>。无法找到内核时，用 <code>python3 routekit_monitor.py --core /你的/mihomo/路径</code>。</li><li>复制终端输出的会话令牌到下面。浏览器询问本地网络权限时允许访问。</li></ol>
+          <div className="subscriptions-monitor-connect"><label className="subscriptions-field">本地助手会话令牌<input id="local-helper-token" type="password" autoComplete="off" spellCheck={false} value={monitorToken} disabled={helperConnecting || monitorRunning || probeRunning} maxLength={512} onChange={event => { setMonitorToken(event.target.value); setHelperCapabilities(undefined); }} placeholder="只在此会话使用，不上传到本站" /></label><button type="button" className="button primary" disabled={!monitorToken.trim() || helperConnecting || probeRunning || monitorRunning} onClick={() => void connectHelper()}>{helperConnecting ? <LoaderCircle size={15} className="subscriptions-spin" /> : <Link2 size={15} />}{helperCapabilities ? "重新连接助手" : "验证并连接"}</button></div>
+          <details><summary>控制器、自托管与隐私</summary><p>批量检测使用隔离的内核，不改变系统代理。节点凭证只从本网页发往本机 127.0.0.1:8766；退出助手会清空任务，网页刷新会清空未提交的分批队列。</p><p>实时流量需要已有 Mihomo 开启 <code>external-controller: 127.0.0.1:9090</code>；设置过 secret 时加 <code>--secret-file 本地文件路径</code>。自托管网页加 <code>--origin https://你的网页域名</code>。</p><p><a href="https://wiki.metacubex.one/start/" target="_blank" rel="noopener noreferrer">Mihomo 官方安装说明</a> · <a href="https://wiki.metacubex.one/api/" target="_blank" rel="noopener noreferrer">控制器 API</a></p></details>
+        </div>}
+        {helperError && <p className="subscriptions-inline-warning" role="alert">{helperError}</p>}
+        {helperCapabilities && !helperCapabilities.probe.available && <p className="subscriptions-inline-warning">{helperCapabilities.probe.reason ?? "批量检测内核尚未就绪，请查看连接设置。"}</p>}
       </div>
-      <nav className="subscriptions-jump" aria-label="订阅工作台区段">
-        <a href="#subscription-import">导入订阅</a><a href="#subscription-library">节点列表{nodes.length ? ` · ${nodes.length}` : ""}</a><a href="#subscription-live">实时上下行</a><a href="#subscription-probe">节点实测</a>
-      </nav>
-      <ol className="subscriptions-start" aria-label="订阅到分流的三个步骤">
+      {probeProgress.total > 0 && <div className={`subscriptions-batch-progress ${probeError ? "has-error" : ""}`} role="status">
+        <div><strong>{probeRunning ? cancellationRequested.current ? "正在取消" : "正在批量检测" : probeError ? "检测已中断" : cancellationRequested.current || probeJob?.status === "cancelled" ? "检测已取消" : "检测完成"}</strong><span>{probeProgress.completed} / {probeProgress.total} 个节点已处理{probeJob?.currentNodeId && probeRunning ? ` · ${nodes.find(node => node.id === probeJob.currentNodeId)?.name ?? "当前节点"}` : ""}</span></div>
+        <progress max={probeProgress.total} value={probeProgress.completed} aria-label="批量节点检测进度" />
+        <div className="subscriptions-actions"><button type="button" className="text-button accent" onClick={() => changeSection("library")}>查看节点结果</button>{probeRunning ? <button type="button" className="button outline compact" disabled={cancellationRequested.current} onClick={requestProbeCancellation}><Square size={14} />取消全部检测</button> : <button type="button" className="text-button accent" onClick={() => { setSort("latency"); changeSection("library"); }}>按延迟排序</button>}</div>
+        {probeError && <p className="subscriptions-inline-warning">{probeError}</p>}
+        {queuePaused && <div className="subscriptions-actions"><button type="button" className="button outline compact" disabled={helperConnecting} onClick={() => void connectHelper()}>重新连接并继续队列</button>{helperCapabilities && <button type="button" className="text-button accent" onClick={retryRetainedQueue}>{pendingSubmission.current ? "明确重试保留节点（可能重复当前批次）" : "重试未完成节点"}</button>}</div>}
+      </div>}
+      <ol hidden={currentSection !== "import"} className="subscriptions-start" aria-label="订阅到分流的三个步骤">
         <li><span>1</span><div><strong>拿到订阅</strong><p>在服务商后台复制「订阅链接」，或准备节点 .txt 文件。</p></div></li>
-        <li><span>2</span><div><strong>导入节点</strong><p>下面读取订阅。打不开时，用文件或粘贴内容继续。</p></div></li>
-        <li><span>3</span><div><strong>给应用选节点</strong><p>点「用于分流」选默认节点，再为应用单独指定去向。</p></div></li>
+        <li><span>2</span><div><strong>自动检测</strong><p>连接本地助手后，导入即可检测出口 IP、延迟与连通性。</p></div></li>
+        <li><span>3</span><div><strong>给应用选节点</strong><p>按实测结果排序，点「用于分流」指定应用去向。</p></div></li>
       </ol>
-      <div className="subscriptions-import" id="subscription-import">
+      <div hidden={currentSection !== "import"} className="subscriptions-import" id="subscription-import">
         <div className="subscriptions-card-heading">
           <h3>
             <Link2 size={18} />
@@ -688,6 +905,7 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
             个节点；相同连接保留分流引用和检测结果，没有有效节点时保留列表。
           </p>
         )}
+        <div className="subscriptions-auto-probe"><label><input type="checkbox" checked={autoProbe} onChange={event => setAutoProbe(event.target.checked)} />导入后自动检测全部节点</label><span>{helperCapabilities?.probe.available ? "已就绪 · 每批最多 100 个，自动分批完成" : "连接本地助手后生效；当前只导入节点"}</span><label><input type="checkbox" checked={speedTest} onChange={event => setSpeedTest(event.target.checked)} />同时测下载速度<span>{speedTest ? "每个新导入节点额外下载最多 5 MB" : "默认不下载 5 MB 测速样本，仍有连接与定位请求流量"}</span></label></div>
         <label className="subscriptions-field" htmlFor="subscription-url">
           HTTPS 订阅地址
           <div className="subscriptions-url-row">
@@ -881,7 +1099,7 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
         )}
       </div>
 
-      <div className="subscriptions-usage">
+      <div hidden={currentSection !== "usage"} className="subscriptions-usage">
         <div className="subscriptions-card-heading">
           <div>
             <h3>
@@ -1050,7 +1268,7 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
         </div>
       )}
 
-      <div className="subscriptions-library" id="subscription-library">
+      <div hidden={currentSection !== "library"} className="subscriptions-library" id="subscription-library">
         <div className="subscriptions-card-heading">
           <h3>
             <Server size={18} />
@@ -1060,6 +1278,8 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
             </span>
           </h3>
           <div className="subscriptions-actions">
+            <button type="button" className="button outline compact" disabled={!selectedNodes.length || probeRunning} onClick={() => { if (helperCapabilities?.probe.available) enqueueProbe(selectedNodes); else { changeSection("probe"); setHelperOpen(true); } }}><Search size={15} />检测选中节点</button>
+            <button type="button" className="text-button accent" onClick={() => changeSection("import")}><Plus size={15} />继续导入</button>
             <button type="button" className="button primary compact" disabled={!nodes.length} onClick={() => onConfigureNodes()}>
               去配置分流 <ArrowRight size={15} />
             </button>
@@ -1319,7 +1539,7 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
                           className={`subscriptions-status ${result?.status ?? "pending"}`}
                         >
                           {!result
-                            ? "未检测"
+                            ? pendingProbeIds.has(item.id) ? queuePaused ? "等待恢复" : probeJob?.currentNodeId === item.id ? "正在检测" : "等待检测" : "未检测"
                             : result.status === "ok"
                               ? "已完成"
                               : "检测异常"}
@@ -1350,21 +1570,14 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
         )}
       </div>
 
-      <div className="subscriptions-live" id="subscription-live">
+      <div hidden={currentSection !== "live"} className="subscriptions-live" id="subscription-live">
         <div className="subscriptions-card-heading">
           <div><h3><Server size={18} />实时上下行</h3><p className="helper">连接你正在运行的 Mihomo，查看总速度和实际代理链路。</p></div>
           <span className="subscriptions-step-count" role="status">{monitorRunning ? liveSnapshot ? "正在连续采样" : "正在连接" : liveSnapshot ? "已停止 · 保留上次快照" : "尚未连接"}</span>
         </div>
         <p className="subscriptions-live-boundary">此功能适用于 Mihomo / Clash Meta。Shadowrocket 的实时流量和连接记录，请在小火箭客户端内查看。</p>
-        <details className="subscriptions-monitor-setup">
-          <summary>首次连接：运行本地监测器</summary>
-          <ol><li>启动 Mihomo，确认已开启 <code>external-controller: 127.0.0.1:9090</code>。</li><li><a href="/routekit_monitor.py" download>下载只读监测器</a>，在文件所在目录运行：<code>python3 routekit_monitor.py</code>。如果 controller 设置了 secret，把它保存在本地文件后用 <code>--secret-file 文件路径</code> 传入。</li><li>复制终端输出的「会话令牌」到下面。浏览器询问本地网络权限时允许访问。</li></ol>
-          <p>监测器只监听本机 127.0.0.1:8766；controller 地址可用 <code>--controller http://127.0.0.1:端口</code> 修改。自托管网页需加 <code>--origin https://你的网页域名</code>。</p>
-          <p>数据直接从本机读取，不经过 RouteKit 服务器；离开本页自动停止。<a href="https://wiki.metacubex.one/api/" target="_blank" rel="noopener noreferrer">Mihomo 官方 API</a></p>
-        </details>
-        <div className="subscriptions-monitor-connect">
-          <label className="subscriptions-field">本地监测器会话令牌<input type="password" autoComplete="off" spellCheck={false} value={monitorToken} disabled={monitorRunning} maxLength={512} onChange={(event) => setMonitorToken(event.target.value)} placeholder="从本地终端复制，仅在此会话使用" /></label>
-          {monitorRunning ? <button type="button" className="button outline" onClick={() => setMonitorRunning(false)}><Square size={14} />停止实时监测</button> : <button type="button" className="button primary" disabled={!monitorToken.trim()} onClick={() => { setMonitorError(""); setLiveSnapshot(undefined); setMonitorRunning(true); }}><RefreshCw size={15} />连接实时监测</button>}
+        <div className="subscriptions-actions">
+          {monitorRunning ? <button type="button" className="button outline" onClick={() => setMonitorRunning(false)}><Square size={14} />停止实时监测</button> : <button type="button" className="button primary" onClick={() => { if (!helperCapabilities?.monitor) { setHelperOpen(true); return; } setMonitorError(""); setLiveSnapshot(undefined); setMonitorRunning(true); }}><RefreshCw size={15} />{helperCapabilities?.monitor ? "开始实时监测" : "连接助手后监测"}</button>}
         </div>
         {monitorError && <p className="subscriptions-inline-warning" role="alert">{monitorError}</p>}
         {liveSnapshot && <>
@@ -1375,19 +1588,27 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
         </>}
       </div>
 
-      <div className="subscriptions-probe" id="subscription-probe">
+      <div hidden={currentSection !== "probe"} className="subscriptions-probe" id="subscription-probe">
         <div className="subscriptions-card-heading">
           <div>
             <h3>
               <Terminal size={18} />
-              节点实测
+              批量检测节点
             </h3>
             <p className="helper">
-              在自己的电脑执行，再导回结果。
+              由本地助手逐个连接节点，检测完成后直接出现在节点列表。
             </p>
           </div>
           <span className="subscriptions-step-count">最多 100 个 / 次</span>
         </div>
+        <div className="subscriptions-actions subscriptions-run-actions">
+          <button type="button" className="button primary" disabled={!selectedNodes.length || probeRunning} onClick={() => { enqueueProbe(selectedNodes); }}>{helperCapabilities?.probe.available ? <Search size={16} /> : <Link2 size={16} />}{helperCapabilities?.probe.available ? `检测选中节点（${selectedNodes.length}）` : "先连接本地助手"}</button>
+          <button type="button" className="button outline" disabled={!nodes.length || probeRunning} onClick={() => enqueueProbe(nodes)}>检测全部 {nodes.length} 个节点</button>
+          <button type="button" className="text-button accent" onClick={() => changeSection("library")}>查看节点与结果 <ArrowRight size={14} /></button>
+        </div>
+        {!nodes.length && <p className="subscriptions-usage-empty">还没有节点。<button type="button" className="text-button accent" onClick={() => changeSection("import")}>先导入订阅</button></p>}
+        <p className="helper">每批最多 100 个，超过后自动分批完成。页面内切换功能会继续检测；关闭或刷新网页会丢失未提交队列，本地已开始的任务可能继续，请在助手中取消或关闭助手。</p>
+        {probeJob && !probeInputs.current.has(probeJob.id) && probeJob.report.results.length > 0 && <details className="subscriptions-previous-results" open><summary>助手保留的上次结果（未关联当前节点）</summary><div className="subscriptions-table-wrap"><table className="subscriptions-live-table"><thead><tr><th>节点</th><th>出口 IP</th><th>延迟</th><th>下载速度</th><th>状态</th></tr></thead><tbody>{probeJob.report.results.map(result => <tr key={result.nodeId}><td>{result.name}</td><td>{result.exitIp ?? "未知"}</td><td>{result.latencyMs === undefined ? "未知" : `${result.latencyMs.toFixed(1)} ms`}</td><td>{result.speedMbps === undefined ? "未知" : `${result.speedMbps.toFixed(2)} Mbps`}</td><td>{result.status === "ok" ? "完成" : result.error ?? "检测异常"}</td></tr>)}</tbody></table></div></details>}
         <div className="subscriptions-probe-options">
           <label className="subscriptions-checkbox">
             <input
@@ -1464,6 +1685,7 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
             )}
           </div>
         </div>
+        <details className="subscriptions-manual-fallback"><summary>手动文件方式（备用）</summary><p className="helper">浏览器连接本地助手受限时，可以下载任务在自己的电脑执行，再导入结果。</p>
         <div className="subscriptions-probe-steps">
           <div>
             <span>1</span>
@@ -1576,8 +1798,9 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
             void restoreJob(file);
           }}
         />
+        </details>
       </div>
-      <details className="subscriptions-help">
+      <details hidden={currentSection !== "import" && currentSection !== "usage"} className="subscriptions-help">
         <summary><Info size={15} />使用说明</summary>
         <div>
           <h3>导入与隐私</h3>
@@ -1595,7 +1818,7 @@ export default function SubscriptionsPanel({ active, nodes, onNodesChange, onCon
           <p>用量只对应最近读取或手动填写的一份订阅，是服务商提供的快照。本站不累计或改写用量；测速经过代理时可能消耗套餐流量。点击「刷新流量与节点」查询新数据；当前订阅的增删会同步，相同连接保留分流引用，手动或其他来源节点保留。刷新地址只保存在本次会话中。</p>
           <p>跨域读取用量需服务商暴露 Access-Control-Expose-Headers: Subscription-Userinfo（<a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Access-Control-Expose-Headers" target="_blank" rel="noopener noreferrer">浏览器规则</a>）。服务未提供或浏览器读不到时，数据保持未知，不代表没有用量、无限流量或永久有效。</p>
           <h3>实测与恢复</h3>
-          <p>浏览器无法逐个切换这些代理。检测任务由你自己的 Python + Mihomo 检测器运行；导入结果只关联当前节点，不自动添加节点。刷新后先恢复原 routekit-job.json 中的节点和 ID，再导入结果。</p>
+          <p>批量检测通过本地助手连接隔离的 Mihomo 内核，逐个返回出口 IP、延迟与性能。检测期间库里的节点被删除或连接凭证改变时，旧结果不会套用；手动文件流程作为备用。网页刷新后助手可能保留当前任务，但未提交的分批队列不会恢复。</p>
           <p>入口不等于出口。IP 位置与坐标是粗略信息，距离仅为地理直线估算，不能预测实际线路、质量或延迟；未知 IP 类型保持未知，不推断住宅属性。</p>
         </div>
       </details>

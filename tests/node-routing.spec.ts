@@ -22,12 +22,20 @@ async function downloadFile(page: Page, button: string) {
 }
 
 async function importNodes(page: Page, source: string, count: number) {
-  await page.goto("/?view=nodes");
+  await page.goto("/?view=nodes&tool=import");
+  await expect(page.locator("#subscription-import")).toBeVisible();
   await page.locator("#subscription-paste").fill(source);
   await page.getByRole("button", { name: "导入粘贴内容", exact: true }).click();
+  await expect(page).toHaveURL(/view=nodes&tool=library/);
+  await expect(page.locator("#subscription-library")).toBeVisible();
   await expect(page.locator(".subscriptions-table tbody tr")).toHaveCount(
     count,
   );
+}
+
+async function navigate(page: Page, label: string) {
+  await page.getByRole("navigation", { name: "工具分类", exact: true })
+    .getByRole("button", { name: label, exact: true }).click();
 }
 
 async function importBackup(page: Page, content: string) {
@@ -45,7 +53,7 @@ test("imported nodes drive app routing, real downloads, diagnostics and saved pr
   await page
     .getByRole("button", { name: "将 Alpha 用于分流", exact: true })
     .click();
-  await expect(page).toHaveURL(/view=config/);
+  await expect(page).toHaveURL(/view=config&tool=apps/);
   const defaultNode = page.getByRole("combobox", {
     name: "默认代理节点",
     exact: true,
@@ -94,7 +102,8 @@ test("imported nodes drive app routing, real downloads, diagnostics and saved pr
   expect(snapshot.nodeRouting.appNodeIds.youtube).toBe(betaId);
   expect(snapshot.nodeRouting.nodes).toHaveLength(2);
 
-  await page.getByRole("button", { name: "批量检查", exact: true }).click();
+  await navigate(page, "批量检查");
+  await expect(page).toHaveURL(/view=diagnostics&tool=rules/);
   await page
     .locator("#diagnostics-input")
     .fill("youtube.com\ntelegram.org\nwww.kugou.com");
@@ -108,7 +117,8 @@ test("imported nodes drive app routing, real downloads, diagnostics and saved pr
   await expect(rows.nth(1)).toContainText("Alpha");
   await expect(rows.nth(2)).toContainText("直连");
 
-  await page.getByRole("button", { name: "分流配置", exact: true }).click();
+  await navigate(page, "分流配置");
+  await expect(page).toHaveURL(/view=config&tool=apps/);
   await page.getByRole("button", { name: "保存到本地", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("已保存到此浏览器");
   await page.reload();
@@ -184,7 +194,8 @@ test("advanced URI routing exports an explicit companion file without dropping c
   expect(config.content).toContain(`FINAL,RK_${selectedId}`);
   expect(config.content).not.toContain("[Proxy]");
   expect(config.content).not.toContain("secret");
-  await page.getByRole("button", { name: "批量检查", exact: true }).click();
+  await navigate(page, "批量检查");
+  await expect(page).toHaveURL(/view=diagnostics&tool=rules/);
   await page.locator("#diagnostics-input").fill("youtube.com");
   await page.getByRole("button", { name: "检查分流", exact: true }).click();
   await expect(page.locator(".diagnostics-table tbody tr")).toContainText(
@@ -218,7 +229,7 @@ test("existing rule-only JSON profiles remain usable without imported nodes", as
     hosts: "",
     general: "",
   };
-  await page.goto("/?view=config");
+  await page.goto("/?view=config&tool=apps");
   await importBackup(page, JSON.stringify(legacy));
   await expect(
     page.getByRole("textbox", { name: "方案名称", exact: true }),

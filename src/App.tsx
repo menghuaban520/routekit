@@ -59,7 +59,30 @@ import NetworkPanel from "./components/NetworkPanel";
 import SubscriptionsPanel from "./components/SubscriptionsPanel";
 import DiagnosticsPanel from "./components/DiagnosticsPanel";
 
-type Workspace = "network" | "nodes" | "config" | "diagnostics";
+import { navigationUrl, normalizeNavigation, readNavigation, type Workspace, type NetworkSection, type SubscriptionSection, type ConfigTab } from "./core/navigation";
+
+const navigationGroups = [
+  { id: "network", label: "网络检查", icon: Globe2, items: [
+    { view: "network", tool: "overview", label: "网络概览", icon: Globe2, description: "检查当前出口、延迟与连通性。" },
+    { view: "network", tool: "speed", label: "速度测试", icon: ArrowDown, description: "看实际下载速度、采样曲线和本次消耗。" },
+    { view: "network", tool: "host", label: "主机查询", icon: Search, description: "查询域名解析、记录类型和 DNS 响应。" },
+    { view: "network", tool: "leaks", label: "泄漏检查", icon: ShieldCheck, description: "按步骤核对 DNS、WebRTC 和 IPv6 出口。" },
+  ] },
+  { id: "nodes", label: "订阅与节点", icon: Network, items: [
+    { view: "nodes", tool: "import", label: "导入订阅", icon: Plus, description: "添加订阅或节点，接着检查可用性与性能。" },
+    { view: "nodes", tool: "usage", label: "套餐用量", icon: ListFilter, description: "查看服务商提供的上传、下载、剩余与到期时间。" },
+    { view: "nodes", tool: "library", label: "节点列表", icon: Network, description: "比较检测结果，为应用选一个合适的节点。" },
+    { view: "nodes", tool: "probe", label: "批量实测", icon: Search, description: "通过本地助手检测节点，逐个查看真实结果。" },
+    { view: "nodes", tool: "live", label: "实时流量", icon: ArrowUp, description: "查看本地 Mihomo 的上下行与活跃连接。" },
+  ] },
+  { id: "config", label: "分流配置", icon: GitBranch, items: [
+    { view: "config", tool: "apps", label: "应用分流", icon: Layers3, description: "将应用交给合适的节点。" },
+    { view: "config", tool: "basic", label: "连接设置", icon: Settings2, description: "配置国内、其他流量与局域网的默认去向。" },
+    { view: "config", tool: "dns", label: "DNS 设置", icon: ShieldCheck, description: "选择 DNS 解析方式与 IPv6 设置。" },
+    { view: "config", tool: "chain", label: "链式代理", icon: Link2, description: "设置前置代理，并在客户端验证整条链路。" },
+    { view: "diagnostics", tool: "rules", label: "批量检查", icon: ListFilter, description: "检查域名和 IP 匹配的规则及目标节点。" },
+  ] },
+] as const;
 const workspaces = [
   {
     id: "network",
@@ -91,7 +114,7 @@ const workspaces = [
   },
 ] as const;
 
-type Tab = "apps" | "basic" | "dns" | "advanced" | "chain";
+type Tab = ConfigTab;
 type Saved = { id: string; savedAt: string; profile: Profile };
 const STORAGE_KEY = "routekit.profiles.v1";
 const labels: Record<Policy, string> = {
@@ -321,19 +344,24 @@ function AppEditor({
 }
 
 export default function App() {
-  const [activeView, setActiveView] = useState<Workspace>(() => {
-    const query = new URLSearchParams(window.location.search).get("view");
-    return workspaces.some((item) => item.id === query)
-      ? (query as Workspace)
-      : "network";
-  });
-  const currentWorkspace = workspaces.find((item) => item.id === activeView)!;
-  function changeWorkspace(view: Workspace) {
-    setActiveView(view);
-    const url = new URL(window.location.href);
-    url.searchParams.set("view", view);
-    window.history.replaceState(null, "", url);
+  const initialNavigation = useRef(readNavigation(new URL(window.location.href))).current;
+  const [activeView, setActiveView] = useState<Workspace>(initialNavigation.view);
+  const [networkSection, setNetworkSection] = useState<NetworkSection>(initialNavigation.view === "network" ? initialNavigation.tool as NetworkSection : "overview");
+  const [subscriptionSection, setSubscriptionSection] = useState<SubscriptionSection>(initialNavigation.view === "nodes" ? initialNavigation.tool as SubscriptionSection : "import");
+  function changeWorkspace(view: Workspace, tool?: string, resetScroll = true) {
+    const target = normalizeNavigation(view, tool);
+    setActiveView(target.view);
+    if (target.view === "network") setNetworkSection(target.tool as NetworkSection);
+    if (target.view === "nodes") setSubscriptionSection(target.tool as SubscriptionSection);
+    if (target.view === "config") {
+      setTab(target.tool as Tab);
+      if (target.tool === "advanced") setAdvanced(true);
+    }
+    const url = navigationUrl(new URL(window.location.href), target);
+    if (url.href !== window.location.href) window.history.pushState(null, "", url);
+    if (resetScroll) window.scrollTo({ top: 0, behavior: "instant" });
   }
+  function selectConfigTab(next: Tab) { changeWorkspace("config", next, false); }
   const [profile, setProfile] = useState<Profile>(createProfile);
   const [nodes, setNodes] = useState<ProxyNode[]>([]);
   const [downloaded, setDownloaded] = useState(false);
@@ -373,8 +401,23 @@ export default function App() {
       {nodeChoices.map(node => <option key={node.id} value={node.id} disabled={!nodeRoutingSupport(node).supported}>{node.name} · {node.protocol.toUpperCase()}{!nodeRoutingSupport(node).supported ? "（暂不支持）" : ""}</option>)}
     </select>;
   }
-  const [advanced, setAdvanced] = useState(false);
-  const [tab, setTab] = useState<Tab>("apps");
+  const [advanced, setAdvanced] = useState(initialNavigation.view === "config" && initialNavigation.tool === "advanced");
+  const [tab, setTab] = useState<Tab>(initialNavigation.view === "config" ? initialNavigation.tool as Tab : "apps");
+  const currentTool = activeView === "network" ? networkSection : activeView === "nodes" ? subscriptionSection : activeView === "config" ? tab : "rules";
+  const currentWorkspace = workspaces.find(item => item.id === activeView)!;
+  const currentPage = navigationGroups.flatMap(group => [...group.items]).find(item => item.view === activeView && item.tool === currentTool);
+  const activeGroup = activeView === "diagnostics" ? "config" : activeView;
+  useEffect(() => {
+    const restore = () => {
+      const target = readNavigation(new URL(window.location.href));
+      setActiveView(target.view);
+      if (target.view === "network") setNetworkSection(target.tool as NetworkSection);
+      if (target.view === "nodes") setSubscriptionSection(target.tool as SubscriptionSection);
+      if (target.view === "config") { setTab(target.tool as Tab); if (target.tool === "advanced") setAdvanced(true); }
+    };
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, []);
   const [search, setSearch] = useState("");
   const [fullPreview, setFullPreview] = useState(false);
   const [modal, setModal] = useState<
@@ -575,15 +618,20 @@ export default function App() {
             <span>网络与分流工具</span>
           </a>
         <nav className="workspace-navigation" aria-label="工具分类">
-          {workspaces.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              aria-current={activeView === id ? "page" : undefined}
-              onClick={() => changeWorkspace(id)}
-            >
-              <Icon size={18} />
-              {label}
-            </button>
+          {navigationGroups.map(group => (
+            <div key={group.id} className="workspace-group" data-active={activeGroup === group.id}>
+              <button className="nav-group-button" aria-pressed={activeGroup === group.id} onClick={() => changeWorkspace(group.id, group.items[0].tool)}>
+                <group.icon size={17} /><span>{group.label}</span>
+              </button>
+              <div className="nav-group-items" aria-label={`${group.label}分类`}>
+                {group.items.map(({view, tool, label, icon: Icon}) => (
+                  <button key={`${view}-${tool}`} aria-current={activeView === view && currentTool === tool ? "page" : undefined} onClick={() => changeWorkspace(view, tool)}>
+                    <Icon size={16} /><span>{label}</span>
+                    {view === "nodes" && tool === "library" && nodes.length > 0 && <small aria-hidden="true">{nodes.length}</small>}
+                  </button>
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
           <nav aria-label="帮助与项目">
@@ -614,8 +662,8 @@ export default function App() {
       <main className="page" id="workspace">
         <section className="intro">
           <div>
-            <h1>{currentWorkspace.title}</h1>
-            <p>{currentWorkspace.description}</p>
+            <h1>{activeView === "config" ? currentWorkspace.title : currentPage?.label ?? currentWorkspace.title}</h1>
+            <p>{currentPage?.description ?? currentWorkspace.description}</p>
           </div>
           {activeView === "config" && (
             <div className="mode-switch" role="group" aria-label="编辑模式">
@@ -623,7 +671,7 @@ export default function App() {
                 aria-pressed={!advanced}
                 onClick={() => {
                   setAdvanced(false);
-                  if (tab === "advanced") setTab("apps");
+                  if (tab === "advanced") selectConfigTab("apps");
                 }}
               >
                 新手模式
@@ -636,12 +684,12 @@ export default function App() {
           )}
         </section>
         <div hidden={activeView !== "network"}>
-          <NetworkPanel />
+          <NetworkPanel active={activeView === "network"} section={networkSection} onSectionChange={section => changeWorkspace("network", section)} />
         </div>
         <div hidden={activeView !== "nodes"}>
-          <SubscriptionsPanel nodes={nodes} onNodesChange={setNodes} active={activeView === "nodes"} onConfigureNodes={(nodeId) => {
+          <SubscriptionsPanel section={subscriptionSection} onSectionChange={section => changeWorkspace("nodes", section)} nodes={nodes} onNodesChange={setNodes} active={activeView === "nodes"} onConfigureNodes={(nodeId) => {
             if (nodeId) bindNode(nodeId);
-            changeWorkspace("config"); setTab("apps");
+            changeWorkspace("config", "apps");
           }} />
         </div>
         <div hidden={activeView !== "diagnostics"}>
@@ -650,7 +698,7 @@ export default function App() {
         <div hidden={activeView !== "config"}>
           <div className="workflow-steps" aria-label="配置步骤">
             <button onClick={() => changeWorkspace("nodes")}><b>{nodeChoices.length ? <Check size={17}/> : "1"}</b><span><strong>导入订阅</strong><small>{nodeChoices.length ? `${nodeChoices.length} 个节点可选` : "已有节点也可直接配置"}</small></span><ArrowRight size={16}/></button>
-            <button onClick={() => setTab("apps")} className="current"><b>2</b><span><strong>应用分流</strong><small>为应用选择连接方式</small></span><ArrowRight size={16}/></button>
+            <button onClick={() => selectConfigTab("apps")} className="current"><b>2</b><span><strong>应用分流</strong><small>为应用选择连接方式</small></span><ArrowRight size={16}/></button>
             <button onClick={() => document.querySelector<HTMLButtonElement>(".download-button")?.focus()}><b>{downloaded ? <Check size={17}/> : "3"}</b><span><strong>下载配置</strong><small>{downloaded ? "已发起下载" : "预览并生成 .conf"}</small></span><ArrowRight size={16}/></button>
             <button onClick={() => setModal("guide")}><b>4</b><span><strong>客户端验证</strong><small>导入、连接，再检查</small></span></button>
           </div>
@@ -711,7 +759,7 @@ export default function App() {
                         buttons[next].click();
                       }
                     }}
-                    onClick={() => setTab(item.id as Tab)}
+                    onClick={() => selectConfigTab(item.id as Tab)}
                   >
                     <item.icon size={18} />
                     {item.label}
@@ -732,7 +780,7 @@ export default function App() {
                     </div>
                     <div className="default-node-setting">
                       <label><span>默认代理节点</span>{nodeSelect(profile.nodeRouting?.defaultNodeId, "默认代理节点")}</label>
-                      <button className="text-button accent" onClick={() => changeWorkspace("nodes")}><Plus size={16}/>{nodeChoices.length ? "管理节点" : "导入节点"}</button>
+                      <button className="text-button accent" onClick={() => changeWorkspace("nodes", nodeChoices.length ? "library" : "import")}><Plus size={16}/>{nodeChoices.length ? "管理节点" : "导入节点"}</button>
                     </div>
                     <div className="app-toolbar">
                       <div className="search-field">
@@ -1589,7 +1637,7 @@ export default function App() {
           <button onClick={() => setModal("guide")}>使用指南</button>
           <span>·</span>
           <span>MIT License</span>
-          <span className="version">v0.4.0</span>
+          <span className="version">v0.5.0</span>
         </div>
       </footer>
       {message && (

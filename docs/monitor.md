@@ -1,21 +1,37 @@
-# Mihomo 实时流量监测
+# 本地助手：节点实测与 Mihomo 流量监测
 
-`public/routekit_monitor.py` 在本机读取你已经运行的 Mihomo / Clash Meta，供 RouteKit 显示总上下行、内核报告的累计流量和实际代理链路。它不启动核心、不切换节点、不修改规则或系统代理，也不发送测速下载。
+`public/routekit_monitor.py` 固定监听本机 `127.0.0.1:8766`，提供两个独立功能：读取已经运行的 Mihomo / Clash Meta 的实时流量；以及在网页提交任务后，复用同目录 `routekit_probe.py` 启动隔离 Mihomo 检测节点。两者都不改变系统代理、小火箭或用户正在运行的 Mihomo。
 
-**这不是 Shadowrocket 接口。** 使用小火箭时，在小火箭客户端中查看实时流量与连接记录。逐个比较订阅节点的延迟、出口与速度，请使用独立的[节点检测器](probe.md)。
+**这不是 Shadowrocket 远程控制接口。** 小火箭的实时流量和连接记录仍在小火箭客户端查看。导入的节点可以交给隔离检测内核测量，协议支持与固定检测目标沿用[节点检测器](probe.md)。
 
-## 连接步骤
+## 网页直接检测节点
+
+需要 Python 3.10 或更新版本，以及自己安装的 Mihomo。把 [`routekit_monitor.py`](../public/routekit_monitor.py) 与 [`routekit_probe.py`](../public/routekit_probe.py) 下载到同一目录后运行：
+
+```sh
+python3 routekit_monitor.py --core /path/to/mihomo
+```
+
+未传 `--core` 时，助手只查找本机 PATH 中的 `mihomo`、常见安装路径，以及 macOS 已安装的 Clash Verge 内置稳定内核；不会下载内核或其他代码。网页不能提交可执行文件路径、命令、输出路径或任意检测 URL。缺少内核、检测脚本缺失或版本过旧时，能力接口会说明不可用，原有流量监测接口仍可使用。
+
+连接网页助手时输入终端生成的会话令牌。网页提交已选择的节点与检测选项，任务每完成一个节点就返回结果。下载测速默认关闭；启用后每节点最多下载 5 MB，其他 HTTPS 延迟和出口请求另计。检测会经过所选代理，可能消耗订阅流量。
+
+助手同时只运行一个任务，最多 100 个节点、2 MiB 正文。正在检测或清理时再次提交返回冲突，不能启动第二个核心。点取消后先显示 `cancelling`，当前请求结束或取消检查生效、隔离核心停止且临时目录清理后才变成 `cancelled`。已完成节点的结果保留，未完成节点不伪造成功或零延迟。
+
+当前/最近一次任务保留在助手内存中，刷新网页后可重新连接并读取；启动新任务会替代旧记录，退出助手后清空。任务输入中的节点 URI 只留在工作线程内存以及权限为 `0600` 的隔离临时核心配置，不回传到任务状态；结果包含节点名称、入口地址与检测到的出口信息，仍应按私人网络资料保管。退出助手（Ctrl+C、SIGTERM 或终端挂断信号）会先取消任务并等待核心清理。
+
+## 读取正在运行的 Mihomo 流量
 
 需要 Python 3.10 或更新版本，脚本只用标准库。先在自己的 Mihomo 中启用 loopback controller，例如 `external-controller: 127.0.0.1:9090`。保持原有客户端运行。
 
-1. 在“订阅与节点 → 实时上下行”下载只读监测器。
+1. 在“订阅与节点 → 实时流量”打开“连接本地助手”，下载助手；仅查看此功能时不需要检测脚本或 `--core`。
 2. 在下载目录运行：
 
    ```sh
    python3 routekit_monitor.py
    ```
 
-3. 把终端打印的**会话令牌**粘贴到网页，点击“连接实时监测”。浏览器询问本地网络权限时按需允许。
+3. 把终端打印的**会话令牌**粘贴到网页，点击“验证并连接”，再点“开始实时监测”。浏览器询问本地网络权限时按需允许。
 4. 页面保留每次成功快照，约每轮完成后 2 秒再查询。点“停止实时监测”、切换工作区或把浏览器页面切到后台，会停止采样；再次使用需手动连接。
 5. 不再需要时，在运行脚本的终端按 `Ctrl+C` 退出。
 
@@ -66,9 +82,19 @@ python3 routekit_monitor.py \
 
 ## 本地访问范围
 
-监测器固定监听 `127.0.0.1:8766`。网页只发出 `GET /v1/snapshot`，携带 `Authorization: Bearer <会话令牌>`；脚本同时检查精确 `Origin`。没有匹配的来源或令牌就拒绝读取，不接受公开转发目标。
+助手固定监听 `127.0.0.1:8766`。所有业务接口都要求 `Authorization: Bearer <会话令牌>` 与精确 `Origin`。浏览器跨域预检只允许已定义路径对应的 HTTP 方法与请求头，支持本地网络访问预检；预检自身按浏览器规范不携带令牌，但实际请求必须验证令牌。
 
-脚本仅向所配置 controller 发送固定的 `/traffic` 与 `/connections` GET 请求，不使用系统 HTTP 代理、不跟随重定向，HTTPS 保留证书验证。它不输出访问日志、控制凭证或连接详情。状态快照直接由本机返回浏览器，响应为 `no-store`，不上传到 RouteKit。
+监测功能仅向所配置的现有 controller 发送固定 `/traffic` 与 `/connections` GET 请求，不使用系统 HTTP 代理、不跟随重定向，HTTPS 保留证书验证。节点任务只控制自己启动的隔离核心，并只请求检测器已经限定的 HTTPS 目标。助手不输出访问日志、控制凭证或原始异常；响应均为 `no-store`，不上传到 RouteKit。
+
+| 接口 | 用途 |
+| --- | --- |
+| `GET /v1/capabilities` | 助手能力、任务限制和 `currentJob`；无任务时为 `null`。 |
+| `POST /v1/probe/jobs` | JSON 正文为原 `ProbeJob`（`version`、`nodes`、`options`），接受后返回 HTTP 202 与任务状态。 |
+| `GET /v1/probe/jobs/<id>` | 读取当前任务进度及不含 URI 的 `report`。 |
+| `DELETE /v1/probe/jobs/<id>` | 请求取消，返回 HTTP 202；须继续查询直至实际清理结束。 |
+| `GET /v1/snapshot` | 读取已有内核快照；额外携带每次连接生成的 `X-RouteKit-Session`。 |
+
+任务状态为 `running`、`cancelling`、`cancelled`、`completed` 或 `failed`；`phase` 为 `preparing`、`checking`、`cleanup` 或 `finished`。`total` / `completed` 表示总节点数和已完成节点数，`currentNodeId` 可省略。`report` 沿用 `{version:1,source:"routekit-local-probe",generatedAt,results}`，可继续使用原结果导入器。HTTP 409 包含当前 `job`；400、401、403、404、413、503 返回固定 `error` 说明，不回显任务正文。
 
 站点 CSP 已允许固定的 `http://127.0.0.1:8766`。浏览器仍可能要求本地网络授权或限制此连接；CSP 和 CORS 允许并不保证所有浏览器可用。不要为解决连接问题把监测器或 Mihomo controller 暴露到公网。
 
@@ -82,4 +108,4 @@ python3 routekit_monitor.py \
 | 无法读取本地 Mihomo | 确认核心已运行，`external-controller` 监听地址与 `--controller` 一致；检查浏览器本地网络权限。 |
 | 8766 端口已占用 | 退出此前启动的监测器后再运行；脚本当前不提供自定义监听端口。 |
 | 连接列表为空 | 用该 Mihomo 客户端实际访问网页后再看；网站本身不会替你产生代理业务流量。 |
-| 显示“已停止”但数值还在 | 保留的是上次成功快照，观察其时间；点“连接实时监测”才会重新采样。 |
+| 显示“已停止”但数值还在 | 保留的是上次成功快照，观察其时间；点“开始实时监测”才会重新采样。 |

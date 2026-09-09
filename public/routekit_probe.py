@@ -29,6 +29,7 @@ import urllib.parse
 import uuid
 
 MAX_JOB_BYTES = 2 * 1024 * 1024
+HELPER_API_VERSION = 1
 MAX_DOWNLOAD = 5_000_000
 IP_API_INTERVAL = 1.2
 ALLOWED_HOSTS = {'www.gstatic.com', 'api.ipapi.is', 'speed.cloudflare.com'}
@@ -38,6 +39,15 @@ CONTROL = re.compile(r'[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]')
 
 class ProbeError(Exception):
     """Only fixed, credential-free messages may be used here."""
+
+
+class ProbeCancelled(Exception):
+    """Cooperative cancellation; never converted to a failed-node result."""
+
+
+def check_cancel(cancel_event):
+    if cancel_event is not None and cancel_event.is_set():
+        raise ProbeCancelled()
 
 
 class HttpFailure(ProbeError):
@@ -292,6 +302,8 @@ def validate_job(job):
         clean_text(node['id'], 128)
         clean_text(node['name'], 160)
         clean_text(node['protocol'], 32)
+        if node['protocol'] not in PROTOCOLS:
+            raise ProbeError('检测任务包含不支持的节点协议。')
         clean_text(node['uri'], 16384)
         host_name(node['server'])
         port_number(node['port'])
@@ -337,6 +349,7 @@ class Core:
         self.secret = secrets.token_urlsafe(32)
         self.proxy_auth = 'routekit:' + secrets.token_urlsafe(32)
         self.rejected = set()
+        self.cancel_event = None
 
     def controller(self, method, path, payload=None):
         connection = http.client.HTTPConnection('127.0.0.1', self.controller_port, timeout=2)
@@ -368,11 +381,34 @@ class Core:
             # A syntactically valid URI can still have an invalid cryptographic
             # key. Isolate -t per node so one bad key cannot abort other nodes.
             for proxy in self.proxies:
+                check_cancel(self.cancel_event)
                 write_config([proxy])
-                checked = subprocess.run(command + ['-t'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                         stderr=subprocess.DEVNULL, timeout=15, env=env, cwd=directory)
-                if checked.returncode:
+                if self.cancel_event is None:
+                    checked = subprocess.run(command + ['-t'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                             stderr=subprocess.DEVNULL, timeout=15, env=env, cwd=directory)
+                    returncode = checked.returncode
+                else:
+                    checked = subprocess.Popen(command + ['-t'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                               stderr=subprocess.DEVNULL, env=env, cwd=directory)
+                    try:
+                        deadline = time.monotonic() + 15
+                        while checked.poll() is None:
+                            check_cancel(self.cancel_event)
+                            if time.monotonic() >= deadline:
+                                raise ProbeError('节点核心校验超时。')
+                            self.cancel_event.wait(.1)
+                        returncode = checked.returncode
+                    finally:
+                        if checked.poll() is None:
+                            checked.terminate()
+                            try:
+                                checked.wait(timeout=3)
+                            except subprocess.TimeoutExpired:
+                                checked.kill()
+                                checked.wait(timeout=3)
+                if returncode:
                     self.rejected.add(proxy['name'])
+            check_cancel(self.cancel_event)
             valid = [proxy for proxy in self.proxies if proxy['name'] not in self.rejected]
             if not valid:
                 return self
@@ -381,6 +417,7 @@ class Core:
                                             stderr=subprocess.DEVNULL, env=env, cwd=directory)
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
+                check_cancel(self.cancel_event)
                 if self.process.poll() is not None:
                     raise ProbeError('mihomo 启动失败；请检查核心兼容性和本地端口。')
                 try:
@@ -417,6 +454,8 @@ def proxy_get(core, host, path, maximum, timeout, status=200, keep_body=True):
     """Explicit CONNECT: ignores system proxy / NO_PROXY; never follows redirects."""
     if host not in ALLOWED_HOSTS:
         raise ProbeError('不允许的检测端点。')
+    cancel_event = getattr(core, 'cancel_event', None)
+    check_cancel(cancel_event)
     context = ssl.create_default_context()
     connection = http.client.HTTPSConnection('127.0.0.1', core.mixed_port, timeout=timeout, context=context)
     token = base64.b64encode(core.proxy_auth.encode()).decode('ascii')
@@ -428,12 +467,14 @@ def proxy_get(core, host, path, maximum, timeout, status=200, keep_body=True):
                                                 'Connection': 'close', 'Cache-Control': 'no-cache'})
         transport_socket = connection.sock
         response = connection.getresponse()
+        check_cancel(cancel_event)
         if response.status != status:
             raise HttpFailure(response.status)
         length = response.getheader('Content-Length')
         if length is not None and (not length.isdigit() or int(length) > maximum):
             raise ProbeError('检测响应超过允许大小。')
         while downloaded < maximum:
+            check_cancel(cancel_event)
             if response.isclosed():
                 break
             remaining = timeout - (time.monotonic() - started)
@@ -572,31 +613,44 @@ def error_message(error, step):
     return f'{step}：连接或响应失败。'
 
 
-def run_job(job, output, executable, core_factory=Core, ip_api_key=None):
+def run_job(job, output, executable, core_factory=Core, ip_api_key=None, cancel_event=None, progress=None, quiet=False):
     nodes, options = validate_job(job)
     results, accepted = [], []
+    def publish(current_node_id=None, phase='checking'):
+        atomic_result(output, results)
+        if progress is not None:
+            progress(results, current_node_id, phase)
+    publish(phase='preparing')
     for index, node in enumerate(nodes):
+        check_cancel(cancel_event)
         try:
             accepted.append((node, parse_node(node, f'NODE_{index + 1}')))
         except ProbeError as error:
             result = base_result(node)
             result['error'] = str(error)
             results.append(result)
-    atomic_result(output, results)
+            publish(phase='preparing')
+    publish(phase='preparing')
     if not accepted:
         return results
     ip_allowed, last_ip_request = True, 0.0
     try:
-        with core_factory(executable, [proxy for _, proxy in accepted]) as core:
+        core_instance = core_factory(executable, [proxy for _, proxy in accepted])
+        core_instance.cancel_event = cancel_event
+        with core_instance as core:
             for index, (node, proxy) in enumerate(accepted, 1):
-                print(f'[{index}/{len(accepted)}] {node["name"]}', flush=True)
+                check_cancel(cancel_event)
+                publish(node['id'])
+                if not quiet:
+                    print(f'[{index}/{len(accepted)}] {node["name"]}', flush=True)
                 result, errors = base_result(node), []
                 if proxy['name'] in core.rejected:
                     result['error'] = 'mihomo 未通过此节点的配置校验；可能是核心版本、密钥或参数不兼容。'
                     results.append(result)
-                    atomic_result(output, results)
+                    publish()
                     continue
                 addresses = server_ips(node['server'])
+                check_cancel(cancel_event)
                 result['warnings'] = ['入口 IP 来自本机系统 DNS，仅供识别服务器；实际出口以经代理查询为准。']
                 if addresses:
                     result['serverIps'] = addresses
@@ -609,7 +663,7 @@ def run_job(job, output, executable, core_factory=Core, ip_api_key=None):
                 except (OSError, http.client.HTTPException, ProbeError, ValueError) as error:
                     result['error'] = error_message(error, '节点切换')
                     results.append(result)
-                    atomic_result(output, results)
+                    publish()
                     continue
                 try:
                     _, _, elapsed = proxy_get(core, 'www.gstatic.com', '/generate_204', 0,
@@ -618,8 +672,14 @@ def run_job(job, output, executable, core_factory=Core, ip_api_key=None):
                 except (OSError, http.client.HTTPException, ProbeError, ValueError) as error:
                     errors.append(error_message(error, 'HTTPS 延迟'))
                 ip_problem = ''
+                check_cancel(cancel_event)
                 if ip_allowed:
-                    time.sleep(max(0, IP_API_INTERVAL - (time.monotonic() - last_ip_request)))
+                    pause = max(0, IP_API_INTERVAL - (time.monotonic() - last_ip_request))
+                    if cancel_event is None:
+                        time.sleep(pause)
+                    else:
+                        cancel_event.wait(pause)
+                        check_cancel(cancel_event)
                     last_ip_request = time.monotonic()
                     try:
                         api_path = '/?key=' + urllib.parse.quote(ip_api_key, safe='') if ip_api_key else '/'
@@ -632,6 +692,7 @@ def run_job(job, output, executable, core_factory=Core, ip_api_key=None):
                 else:
                     ip_problem = 'IP 信息服务已限流，本轮后续节点不再调用该服务。'
                 if 'exitIp' not in result:
+                    check_cancel(cancel_event)
                     try:
                         body, _, _ = proxy_get(core, 'speed.cloudflare.com', '/cdn-cgi/trace', 16384, options['timeoutSeconds'])
                         result.update(trace_info(body))
@@ -639,6 +700,7 @@ def run_job(job, output, executable, core_factory=Core, ip_api_key=None):
                     except (OSError, http.client.HTTPException, ProbeError, ValueError) as error:
                         errors.extend([ip_problem, error_message(error, '出口 IP 备用检测')])
                 if options['speedTest']:
+                    check_cancel(cancel_event)
                     try:
                         _, count, elapsed = proxy_get(core, 'speed.cloudflare.com',
                                                      f'/__down?bytes={options["downloadBytes"]}',
@@ -652,7 +714,8 @@ def run_job(job, output, executable, core_factory=Core, ip_api_key=None):
                 if errors:
                     result['error'] = ' '.join(errors)
                 results.append(result)
-                atomic_result(output, results)
+                check_cancel(cancel_event)
+                publish()
     except (OSError, subprocess.SubprocessError, ProbeError, ValueError) as error:
         completed = {row['nodeId'] for row in results}
         for node, _ in accepted:
@@ -660,7 +723,7 @@ def run_job(job, output, executable, core_factory=Core, ip_api_key=None):
                 row = base_result(node)
                 row['error'] = error_message(error, '本地核心')
                 results.append(row)
-        atomic_result(output, results)
+        publish(phase='cleanup')
     return results
 
 
