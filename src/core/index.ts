@@ -7,14 +7,28 @@ import type {
   Profile,
 } from "./types";
 import { getConfigExporter } from "./adapters";
+import {
+  assertNodeRouting,
+  compileRoutingNodes,
+  nodeRoutingAlias,
+  resolveRouteNode,
+  type RouteTarget,
+} from "./node-routing";
 export type {
   AppRule,
   ConfigExporter,
   CustomRule,
   Policy,
   Profile,
+  NodeRouting,
 } from "./types";
 export { CLIENTS, getConfigExporter } from "./adapters";
+export {
+  nodeRoutingSupport,
+  routingNodeBundle,
+  routePolicyLabel,
+  resolveRouteNode,
+} from "./node-routing";
 
 // Small, independently written starter rules; these are not complete application inventories.
 export const APP_CATALOG: AppRule[] = [
@@ -267,6 +281,7 @@ function assertProfile(value: unknown): asserts value is Profile {
       "rules",
       "hosts",
       "general",
+      "nodeRouting",
     ],
     "配置",
   );
@@ -284,6 +299,7 @@ function assertProfile(value: unknown): asserts value is Profile {
   oneOf(value.dns.ipv6, [true, false], "IPv6 选项");
   string(value.hosts, "Hosts", 20000);
   string(value.general, "高级通用参数", 10000);
+  if (value.nodeRouting !== undefined) assertNodeRouting(value.nodeRouting);
   if (!Array.isArray(value.apps) || value.apps.length > 100)
     throw new Error("应用最多 100 个");
   if (!Array.isArray(value.rules) || value.rules.length > 500)
@@ -470,8 +486,9 @@ export function compileProfile(profile: Profile): CompilationResult {
         : dnsServers(profile.dns.servers, errors);
   const extraGeneral = exporter.parseGeneral(profile.general, errors);
   const hosts = hostLines(profile.hosts, errors);
+  const routingNodes = compileRoutingNodes(profile);
   const rules: NormalizedRule[] = [],
-    seenRules = new Map<string, Policy>();
+    seenRules = new Map<string, string>();
   const networkRanges = new Map<NormalizedRule, NetworkRange>();
   let overlapWarnings = 0;
   const add = (
@@ -479,22 +496,31 @@ export function compileProfile(profile: Profile): CompilationResult {
     value: string,
     policy: Policy,
     noResolve = false,
+    routeTarget?: RouteTarget,
   ) => {
+    const node = resolveRouteNode(profile, policy, routeTarget);
+    const target = node ? nodeRoutingAlias(node) : policy;
     const key = `${type},${value}`;
     if (seenRules.has(key)) {
-      if (seenRules.get(key) !== policy)
+      if (seenRules.get(key) !== target)
         warnings.push(
           `${key} 存在不同策略；按顺序使用前面的 ${seenRules.get(key)}`,
         );
       return;
     }
-    const rule = { type, value, policy, noResolve };
+    const rule = {
+      type,
+      value,
+      policy,
+      noResolve,
+      ...(node ? { target } : {}),
+    };
     const range =
       type === "IP-CIDR" || type === "IP-CIDR6"
         ? networkRange(value, type === "IP-CIDR" ? 4 : 6)
         : undefined;
     const overlap = rules.find((previous) => {
-      if (previous.policy === policy) return false;
+      if ((previous.target ?? previous.policy) === target) return false;
       if (domainRulesOverlap(previous, rule)) return true;
       const previousRange = networkRanges.get(previous);
       return (
@@ -509,11 +535,11 @@ export function compileProfile(profile: Profile): CompilationResult {
       overlapWarnings++;
       if (overlapWarnings <= 50)
         warnings.push(
-          `${key} 与前面的 ${overlap.type},${overlap.value} 范围重叠且策略不同（${overlap.policy} / ${policy}）；已保留顺序，重叠流量由最先命中的规则决定，请检查。`,
+          `${key} 与前面的 ${overlap.type},${overlap.value} 范围重叠且策略不同（${overlap.target ?? overlap.policy} / ${target}）；已保留顺序，重叠流量由最先命中的规则决定，请检查。`,
         );
     }
     if (range) networkRanges.set(rule, range);
-    seenRules.set(key, policy);
+    seenRules.set(key, target);
     rules.push(rule);
   };
   if (profile.bypassLan) {
@@ -541,13 +567,17 @@ export function compileProfile(profile: Profile): CompilationResult {
         errors.push(`无效的 ${rule.type} 网段：${value}`);
         continue;
       }
-      add(rule.type, value.toLowerCase(), rule.policy, true);
+      add(rule.type, value.toLowerCase(), rule.policy, true, {
+        ruleId: rule.id,
+      });
     } else if (rule.type === "DOMAIN-KEYWORD") {
       if (!/^[a-zA-Z0-9._-]{1,253}$/.test(value)) {
         errors.push("域名关键词仅支持英文字母、数字、点、下划线与短横线");
         continue;
       }
-      add(rule.type, value.toLowerCase(), rule.policy);
+      add(rule.type, value.toLowerCase(), rule.policy, false, {
+        ruleId: rule.id,
+      });
       warnings.push(`关键词 ${value} 会匹配任何包含该内容的域名，请留意误匹配`);
     } else {
       const domain = domainASCII(value);
@@ -555,7 +585,7 @@ export function compileProfile(profile: Profile): CompilationResult {
         errors.push(`无效的域名：${value}`);
         continue;
       }
-      add(rule.type, domain, rule.policy);
+      add(rule.type, domain, rule.policy, false, { ruleId: rule.id });
     }
   }
   for (const app of profile.apps) {
@@ -565,16 +595,11 @@ export function compileProfile(profile: Profile): CompilationResult {
         errors.push(`${app.name} 的域名无效：${entry}`);
         continue;
       }
-      add("DOMAIN-SUFFIX", domain, app.policy);
+      add("DOMAIN-SUFFIX", domain, app.policy, false, { appId: app.id });
     }
   }
   add("GEOIP", "CN", profile.domesticPolicy);
-  rules.push({
-    type: "FINAL",
-    value: "",
-    policy: profile.finalPolicy,
-    noResolve: false,
-  });
+  add("FINAL", "", profile.finalPolicy);
   if (overlapWarnings > 50)
     warnings.push(
       `另有 ${overlapWarnings - 50} 条规则存在不同策略的范围重叠，请缩小规则范围或检查顺序。`,
@@ -606,12 +631,27 @@ export function compileProfile(profile: Profile): CompilationResult {
     )
   )
     warnings.push("代理连接将使用本地 Hosts 映射；错误映射可能导致连接失败。");
+  const externalNodes = routingNodes.filter(
+    (node) => node.mode === "reference",
+  );
+  if (routingNodes.length)
+    warnings.push(
+      "已绑定具体节点；节点配置与 JSON 备份包含连接凭证，规则匹配不代表节点已连通。",
+    );
+  if (externalNodes.length)
+    warnings.push(
+      `${externalNodes.length} 个节点需先导入配套节点文件，再导入本配置；请保留 RK_ 节点备注。仅下载 .conf 无法包含这些节点的完整连接参数。`,
+    );
   const content = exporter.serialize({
     servers,
     ipv6: profile.dns.ipv6,
     general: extraGeneral,
     rules,
     hosts,
+    proxies: routingNodes
+      .filter((node) => node.mode === "embedded")
+      .map((node) => ({ alias: node.alias, definition: node.definition! })),
+    externalNodes: externalNodes.map((node) => ({ alias: node.alias })),
   });
   return {
     content: errors.length ? "" : content,
@@ -643,7 +683,10 @@ export function serializeProfile(profile: Profile): string {
   assertProfile(profile);
   const result = compileProfile(profile);
   if (result.errors.length) throw new Error(result.errors.join("；"));
-  return JSON.stringify(profile, null, 2);
+  const content = JSON.stringify(profile, null, 2);
+  if (new TextEncoder().encode(content).length > MAX_BACKUP_SIZE)
+    throw new Error("备份文件不能超过 512 KB；请减少保存的节点或规则");
+  return content;
 }
 
 export function fileName(name: string): string {

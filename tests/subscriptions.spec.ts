@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 const ss = (name: string, host: string) =>
-  `ss://${Buffer.from("aes-256-gcm:test-only-password").toString("base64")}@${host}:443#${name}`;
+  `ss://${Buffer.from("aes-256-gcm:test-only-password").toString("base64")}@${host}:443#${encodeURIComponent(name)}`;
 const sample = [
   ss("Alpha", "alpha.example.com"),
   ss("Beta", "beta.example.com"),
@@ -240,4 +241,105 @@ test("a saved probe job restores stable node IDs after refresh", async ({
   await expect(page.locator(".subscriptions-table tbody tr")).toContainText(
     "82.0",
   );
+});
+
+test("refresh keeps node IDs and routing, synchronizes source changes, and preserves other nodes on errors", async ({ page }) => {
+  let responseBody = [ss("Tokyo", "tokyo.example.com"), ss("Removed", "removed.example.com")].join("\n");
+  let status = 200;
+  let userinfo: string | undefined = "upload=1024; download=2048; total=1048576; expire=4102444800";
+  await page.route("https://refresh.example.com/**", route => route.fulfill({ status, contentType: "text/plain", headers: { "Access-Control-Allow-Origin": "*", ...(userinfo ? { "Subscription-Userinfo": userinfo, "Access-Control-Expose-Headers": "Subscription-Userinfo" } : {}) }, body: responseBody }));
+  await page.goto("/?view=nodes");
+  await page.locator("#subscription-paste").fill(ss("Manual", "manual.example.com"));
+  await page.getByRole("button", { name: "导入粘贴内容", exact: true }).click();
+  await page.locator("#subscription-url").fill("https://refresh.example.com/private-session-token");
+  await page.getByRole("button", { name: "读取订阅", exact: true }).click();
+  await expect(page.locator(".subscriptions-table tbody tr")).toHaveCount(3);
+  const downloadJob = async () => {
+    const pending = page.waitForEvent("download");
+    await page.getByRole("button", { name: /下载检测任务/ }).click();
+    return JSON.parse(await readFile((await (await pending).path())!, "utf8"));
+  };
+  const before = await downloadJob();
+  const tokyo = before.nodes.find((node: {name: string}) => node.name === "Tokyo");
+  await page.getByRole("button", { name: "将 Tokyo 用于分流", exact: true }).click();
+  await expect(page).toHaveURL(/view=config/);
+  await page.getByRole("button", { name: "完整配置", exact: true }).click();
+  await expect(page.getByLabel("生成的配置内容", { exact: true })).toContainText("tokyo.example.com");
+  await page.getByRole("button", { name: "订阅与节点", exact: true }).click();
+  responseBody = [ss("Tokyo renamed", "tokyo.example.com"), ss("New", "new.example.com")].join("\n");
+  userinfo = undefined;
+  await page.getByRole("button", { name: "刷新流量与节点", exact: true }).click();
+  await expect(page.getByText("订阅已刷新 · 当前共 3 个节点", { exact: true })).toBeVisible();
+  await expect(page.locator(".subscriptions-table tbody tr")).toHaveCount(3);
+  await expect(page.locator(".subscriptions-table")).toContainText("Manual");
+  await expect(page.locator(".subscriptions-table")).not.toContainText("Removed");
+  await expect(page.locator(".subscriptions-usage-metrics").getByText("未知", { exact: true })).toHaveCount(6);
+  const after = await downloadJob();
+  expect(after.nodes.find((node: {name:string}) => node.name === "Tokyo renamed").id).toBe(tokyo.id);
+  responseBody = ss("New", "new.example.com") + "\ninvalid subscription line";
+  await page.getByRole("button", { name: "刷新流量与节点", exact: true }).click();
+  await expect(page.getByText(/本次未更新节点和流量/)).toBeVisible();
+  await expect(page.locator(".subscriptions-table tbody tr")).toHaveCount(3);
+  await expect(page.locator(".subscriptions-table")).toContainText("Tokyo renamed");
+  responseBody = [ss("Tokyo renamed", "tokyo.example.com"), ss("New", "new.example.com")].join("\n");
+  status = 503;
+  await page.getByRole("button", { name: "刷新流量与节点", exact: true }).click();
+  await expect(page.getByText(/本次读取失败/)).toBeVisible();
+  await expect(page.locator(".subscriptions-table tbody tr")).toHaveCount(3);
+  await expect(page.locator("#subscription-url")).toHaveValue("https://refresh.example.com/private-session-token");
+  expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain("private-session-token");
+  status = 200;
+  userinfo = "upload=2048; download=2048; total=1048576; expire=4102444800";
+  await page.getByRole("button", { name: "刷新流量与节点", exact: true }).click();
+  await expect(page.locator(".subscriptions-usage-metrics").getByText("4 KiB", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "去配置分流", exact: true }).click();
+  await expect(page.getByLabel("生成的配置内容", { exact: true })).toContainText("tokyo.example.com");
+});
+
+test("format example is explicitly non-connectable and never populates the node library", async ({ page }) => {
+  await page.goto("/?view=nodes");
+  await page.locator(".subscriptions-example summary").click();
+  await expect(page.locator(".subscriptions-example")).toContainText("不能连接网络");
+  await expect(page.locator(".subscriptions-example code")).toContainText("node.example.com");
+  await expect(page.locator(".subscriptions-table tbody tr")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "去配置分流", exact: true })).toBeDisabled();
+});
+
+test("real loopback monitor enforces authentication, renders live samples, and stops on navigation", async ({ page }) => {
+  const bridge = spawn("python3", ["-B", "tests/python/test_monitor.py", "--serve-fixture"], { stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Monitor fixture did not start")), 8000);
+      let text = "";
+      bridge.stdout.on("data", chunk => { text += chunk.toString(); if (text.includes("fixture-ready")) { clearTimeout(timeout); resolve(); } });
+      bridge.once("error", error => { clearTimeout(timeout); reject(error); });
+      bridge.once("exit", code => { clearTimeout(timeout); reject(new Error(`Monitor fixture exited ${code}`)); });
+    });
+    let requests = 0;
+    page.on("request", request => { if (request.url() === "http://127.0.0.1:8766/v1/snapshot" && request.method() === "GET") requests++; });
+    await page.goto("/?view=nodes");
+    await page.getByLabel("本地监测器会话令牌", { exact: true }).fill("wrong-token");
+    await page.getByRole("button", { name: "连接实时监测", exact: true }).click();
+    await expect(page.getByRole("alert").filter({hasText: "会话令牌不正确"})).toBeVisible();
+    await page.getByLabel("本地监测器会话令牌", { exact: true }).fill("fixture-only-monitor-token");
+    await page.getByRole("button", { name: "连接实时监测", exact: true }).click();
+    await expect(page.locator(".subscriptions-live-metrics")).toContainText("4 KiB/s");
+    await expect(page.locator(".subscriptions-live-table")).toContainText("测试 Tokyo → PROXY");
+    await expect.poll(() => requests).toBeGreaterThanOrEqual(3);
+    await expect(page.locator(".subscriptions-live-table")).not.toContainText("等待下次采样");
+    await page.getByRole("button", { name: "停止实时监测", exact: true }).click();
+    const stoppedAt = requests;
+    await page.waitForTimeout(2500);
+    expect(requests).toBe(stoppedAt);
+    await page.getByRole("button", { name: "连接实时监测", exact: true }).click();
+    await expect(page.locator(".subscriptions-live-metrics")).toBeVisible();
+    await expect(page.locator(".subscriptions-live-table")).toContainText("等待下次采样");
+    await page.getByRole("button", { name: "网络概览", exact: true }).click();
+    const leftAt = requests;
+    await page.waitForTimeout(2500);
+    expect(requests).toBe(leftAt);
+    await page.getByRole("button", { name: "订阅与节点", exact: true }).click();
+    await expect(page.getByRole("button", { name: "连接实时监测", exact: true })).toBeVisible();
+    expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain("fixture-only-monitor-token");
+  } finally { bridge.kill("SIGTERM"); await new Promise<void>(resolve => bridge.exitCode !== null ? resolve() : bridge.once("exit", () => resolve())); }
 });

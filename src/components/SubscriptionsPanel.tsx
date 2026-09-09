@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownToLine,
+  ArrowRight,
   Check,
   Copy,
   Download,
@@ -12,6 +13,7 @@ import {
   LoaderCircle,
   MapPin,
   Plus,
+  RefreshCw,
   Search,
   Server,
   ShieldCheck,
@@ -108,6 +110,24 @@ const TYPE_LABELS: Record<string, string> = {
   vpn: "VPN",
   proxy: "代理网络",
 };
+const DEMO_LINK = "ss://YWVzLTI1Ni1nY206ZGVtby1vbmx5@node.example.com:443#格式示例-不可连接";
+
+type SubscriptionsPanelProps = {
+  active: boolean;
+  nodes: ProxyNode[];
+  onNodesChange: (nodes: ProxyNode[]) => void;
+  onConfigureNodes: (nodeId?: string) => void;
+};
+type LiveChain = { name: string; connections: number; uploadedBytes: number; downloadedBytes: number; uploadBytesPerSecond?: number; downloadBytesPerSecond?: number };
+type LiveSnapshot = { source: "mihomo"; observedAt: string; uploadBytesPerSecond: number; downloadBytesPerSecond: number; uploadedBytes: number; downloadedBytes: number; chains: LiveChain[] };
+function readLiveSnapshot(value: unknown): LiveSnapshot {
+  if (!value || typeof value !== "object") throw new Error("监测器返回格式不正确");
+  const data = value as LiveSnapshot;
+  const valid = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= Number.MAX_SAFE_INTEGER;
+  if (data.source !== "mihomo" || typeof data.observedAt !== "string" || !Number.isFinite(Date.parse(data.observedAt)) || ![data.uploadBytesPerSecond, data.downloadBytesPerSecond, data.uploadedBytes, data.downloadedBytes].every(valid) || !Array.isArray(data.chains) || data.chains.length > 10000 || data.chains.some((item) => !item || typeof item.name !== "string" || item.name.length > 4096 || ![item.connections, item.uploadedBytes, item.downloadedBytes].every(valid) || ![item.uploadBytesPerSecond, item.downloadBytesPerSecond].every((rate) => rate === undefined || valid(rate)))) throw new Error("监测器返回的计数或时间无效");
+  return data;
+}
+function rateLabel(value?: number) { return value === undefined ? "等待下次采样" : `${formatBytes(Math.round(value))}/s`; }
 
 function download(
   content: string,
@@ -171,8 +191,7 @@ function dateLabel(value: string): string {
   return new Date(value).toLocaleString("zh-CN", { hour12: false });
 }
 
-export default function SubscriptionsPanel() {
-  const [nodes, setNodes] = useState<ProxyNode[]>([]);
+export default function SubscriptionsPanel({ active, nodes, onNodesChange, onConfigureNodes }: SubscriptionsPanelProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [measurements, setMeasurements] = useState<
     Record<string, NodeMeasurement>
@@ -201,6 +220,12 @@ export default function SubscriptionsPanel() {
   const [latitude, setLatitude] = useState(""),
     [longitude, setLongitude] = useState("");
   const [fetchedSource, setFetchedSource] = useState("");
+  const [refreshError, setRefreshError] = useState("");
+  const [monitorToken, setMonitorToken] = useState("");
+  const [monitorRunning, setMonitorRunning] = useState(false);
+  const [monitorError, setMonitorError] = useState("");
+  const [liveSnapshot, setLiveSnapshot] = useState<LiveSnapshot>();
+  const lastSubscription = useRef<{ url: string; ownedIds: Set<string>; updatedAt: string } | null>(null);
   const [usage, setUsage] = useState<UsageSnapshot>(),
     [manualHeader, setManualHeader] = useState("");
   const nodeFile = useRef<HTMLInputElement>(null),
@@ -211,6 +236,38 @@ export default function SubscriptionsPanel() {
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
   useEffect(() => () => abort.current?.abort(), []);
+  useEffect(() => {
+    const pause = () => { if (document.hidden) setMonitorRunning(false); };
+    document.addEventListener("visibilitychange", pause);
+    return () => document.removeEventListener("visibilitychange", pause);
+  }, []);
+  useEffect(() => {
+    if (!active) { setMonitorRunning(false); return; }
+    if (!monitorRunning) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+    const sampleSession = crypto.randomUUID();
+    async function sample() {
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      try {
+        const response = await fetch("http://127.0.0.1:8766/v1/snapshot", { headers: { Authorization: `Bearer ${monitorToken.trim()}`, "X-RouteKit-Session": sampleSession }, signal: controller.signal, credentials: "omit", cache: "no-store", redirect: "error", referrerPolicy: "no-referrer" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(typeof body?.error === "string" ? body.error.slice(0, 500) : `监测器返回 HTTP ${response.status}`);
+        const data = readLiveSnapshot(body);
+        if (!stopped) { setLiveSnapshot(data); setMonitorError(""); }
+      } catch (error) {
+        if (!stopped) {
+          setMonitorError(error instanceof TypeError || controller.signal.aborted ? "没有连上本地监测器。请运行下载的脚本，核对令牌，并允许浏览器访问本地网络；部分浏览器会限制此连接。" : error instanceof Error ? error.message : "监测器连接失败");
+          setMonitorRunning(false);
+        }
+        return;
+      } finally { clearTimeout(timeout); }
+      if (!stopped) timer = setTimeout(() => void sample(), 2000);
+    }
+    void sample();
+    return () => { stopped = true; controller.abort(); clearTimeout(timer); };
+  }, [active, monitorRunning, monitorToken]);
 
   const origin = useMemo<Coordinates | undefined>(() => {
     if (originId !== "custom")
@@ -264,6 +321,16 @@ export default function SubscriptionsPanel() {
   }, [filtered, selected, allVisibleSelected]);
   const measuredCount = nodes.filter((item) => measurements[item.id]).length;
 
+  function setNodes(next: ProxyNode[]) {
+    nodesRef.current = next;
+    onNodesChange(next);
+  }
+
+  function keepMeasurements(next: ProxyNode[]) {
+    const ids = new Set(next.map((item) => item.id));
+    setMeasurements((previous) => Object.fromEntries(Object.entries(previous).filter(([id]) => ids.has(id))));
+  }
+
   function addParsed(parsed: SubscriptionResult, importMode: ImportMode) {
     setMessage("");
     if (!parsed.nodes.length) {
@@ -272,18 +339,20 @@ export default function SubscriptionsPanel() {
         errors: parsed.errors,
         warnings: parsed.warnings,
       });
-      return;
+      return undefined;
     }
     if (importMode === "replace") {
-      setNodes(parsed.nodes);
-      setSelected(new Set(parsed.nodes.map((item) => item.id)));
-      setMeasurements({});
+      const existing = new Map(nodesRef.current.map((item) => [proxyNodeIdentity(item), item.id]));
+      const next = parsed.nodes.map((item) => ({ ...item, id: existing.get(proxyNodeIdentity(item)) ?? item.id }));
+      setNodes(next);
+      setSelected(new Set(next.map((item) => item.id)));
+      keepMeasurements(next);
       setNotice({
         title: `已替换为 ${parsed.nodes.length} 个节点`,
         errors: parsed.errors,
         warnings: parsed.warnings,
       });
-      return;
+      return next;
     }
     const currentNodes = nodesRef.current;
     const existing = new Set(currentNodes.map(proxyNodeIdentity)),
@@ -303,7 +372,8 @@ export default function SubscriptionsPanel() {
       existing.add(key);
       added.push(item);
     }
-    setNodes((previous) => [...previous, ...added]);
+    const next = [...currentNodes, ...added];
+    setNodes(next);
     setSelected(
       (previous) => new Set([...previous, ...added.map((item) => item.id)]),
     );
@@ -317,10 +387,12 @@ export default function SubscriptionsPanel() {
       ],
       warnings: parsed.warnings,
     });
+    return next;
   }
 
-  async function fetchSubscription() {
-    const requestedUrl = subscriptionUrl.trim();
+  async function fetchSubscription(refresh = false) {
+    if (abort.current) return;
+    const requestedUrl = refresh ? lastSubscription.current?.url ?? "" : subscriptionUrl.trim();
     if (!validateSubscriptionUrl(requestedUrl)) {
       setNotice({
         title: "订阅地址无效",
@@ -336,6 +408,7 @@ export default function SubscriptionsPanel() {
     setBusy(true);
     setMessage("");
     setNotice(null);
+    setRefreshError("");
     const timeout = setTimeout(() => controller.abort(), 15000);
     try {
       const response = await fetch(requestedUrl, {
@@ -350,21 +423,54 @@ export default function SubscriptionsPanel() {
         throw new Error(
           `订阅服务返回 HTTP ${response.status}，请检查地址或下载文件后导入`,
         );
-      const rawHeader = response.headers.get("subscription-userinfo");
-      setUsage({
-        data: parseSubscriptionUsage(rawHeader ?? ""),
-        source: "header",
-        capturedAt: new Date().toISOString(),
-        headerVisible: rawHeader !== null,
-        origin: redactSubscriptionUrl(requestedUrl),
-        rawHeader: rawHeader ?? "",
-      });
       if (response.headers.get("content-type")?.includes("text/html"))
         throw new Error(
           "订阅返回了网页，请使用订阅的节点文本链接或导入 .txt 文件",
         );
       const content = await limitedResponseText(response);
-      addParsed(parseSubscription(content), mode);
+      const parsed = parseSubscription(content);
+      if (!parsed.nodes.length) {
+        addParsed(parsed, mode);
+        throw new Error("没有可用节点，已保留原节点与上次成功的流量快照。请检查订阅格式后重试。");
+      }
+      const currentNodes = nodesRef.current;
+      const previous = lastSubscription.current;
+      const matchingSource = previous?.url === requestedUrl;
+      const shouldSync = matchingSource && (refresh || mode === "append");
+      if (shouldSync && parsed.errors.length) {
+        throw new Error(`订阅有 ${parsed.errors.length} 条内容无法解析，本次未更新节点和流量。旧列表与分流引用保留，请检查订阅格式后重试。`);
+      }
+      let next: ProxyNode[];
+      let ownedIds: Set<string>;
+      if (shouldSync) {
+        const existing = new Map(currentNodes.map((item) => [proxyNodeIdentity(item), item]));
+        const untouched = currentNodes.filter((item) => !previous.ownedIds.has(item.id));
+        const identities = new Set(untouched.map(proxyNodeIdentity));
+        next = [...untouched];
+        ownedIds = new Set();
+        let overflow = 0;
+        for (const item of parsed.nodes) {
+          const identity = proxyNodeIdentity(item);
+          if (identities.has(identity)) continue;
+          if (next.length >= 500) { overflow++; continue; }
+          const stable = { ...item, id: existing.get(identity)?.id ?? item.id };
+          next.push(stable);
+          identities.add(identity);
+          ownedIds.add(stable.id);
+        }
+        setNodes(next);
+        keepMeasurements(next);
+        setSelected((selectedIds) => new Set(next.filter((item) => selectedIds.has(item.id) || !currentNodes.some((old) => old.id === item.id)).map((item) => item.id)));
+        setNotice({ title: `订阅已刷新 · 当前共 ${next.length} 个节点`, errors: [...parsed.errors, ...(overflow ? [`另有 ${overflow} 个节点超出 500 个上限`] : [])], warnings: parsed.warnings });
+      } else {
+        next = addParsed(parsed, mode)!;
+        const beforeIds = new Set(currentNodes.map((item) => item.id));
+        ownedIds = new Set(next.filter((item) => mode === "replace" || !beforeIds.has(item.id)).map((item) => item.id));
+      }
+      const capturedAt = new Date().toISOString();
+      const rawHeader = response.headers.get("subscription-userinfo");
+      setUsage({ data: parseSubscriptionUsage(rawHeader ?? ""), source: "header", capturedAt, headerVisible: rawHeader !== null, origin: redactSubscriptionUrl(requestedUrl), rawHeader: rawHeader ?? "" });
+      lastSubscription.current = { url: requestedUrl, ownedIds, updatedAt: capturedAt };
       setFetchedSource(
         `${redactSubscriptionUrl(requestedUrl)} · ${new Date().toLocaleTimeString("zh-CN")}`,
       );
@@ -377,6 +483,7 @@ export default function SubscriptionsPanel() {
             ? error.message
             : "读取失败，请改用粘贴或文件导入。";
       setNotice({ title: "订阅尚未读取", errors: [explanation], warnings: [] });
+      setRefreshError(explanation);
     } finally {
       clearTimeout(timeout);
       if (abort.current === controller) abort.current = null;
@@ -434,7 +541,7 @@ export default function SubscriptionsPanel() {
     });
   }
   function removeSelected() {
-    setNodes((previous) => previous.filter((item) => !selected.has(item.id)));
+    setNodes(nodesRef.current.filter((item) => !selected.has(item.id)));
     setMeasurements((previous) =>
       Object.fromEntries(
         Object.entries(previous).filter(([id]) => !selected.has(id)),
@@ -528,150 +635,27 @@ export default function SubscriptionsPanel() {
     <section className="subscriptions-panel" aria-label="节点与订阅工作台">
       <div className="section-heading subscriptions-heading">
         <div>
-          <h2>订阅与节点</h2>
-          <p>查看用量，整理节点，比较实测结果。</p>
+          <h2>连接你的节点</h2>
+          <p>导入订阅，把每个应用交给合适的节点。</p>
         </div>
         <span className="subscriptions-local">
           <ShieldCheck size={16} />
-          刷新后清空
+          仅在当前会话
         </span>
       </div>
-      <div className="subscriptions-usage">
-        <div className="subscriptions-card-heading">
-          <div>
-            <h3>
-              <ArrowDownToLine size={18} />
-              订阅流量与到期
-            </h3>
-          </div>
-          <span className="subscriptions-step-count">
-            {!usage
-              ? "尚未读取"
-              : usage.source === "manual"
-                ? "手动提供的数据"
-                : usage.headerVisible
-                  ? "服务商响应头"
-                  : "响应头不可见"}
-          </span>
-        </div>
-        <div className="subscriptions-usage-metrics">
-          <div>
-            <span>总额度</span>
-            <strong>{formatBytes(usage?.data.totalBytes)}</strong>
-          </div>
-          <div>
-            <span>已用流量</span>
-            <strong>{formatBytes(usage?.data.usedBytes)}</strong>
-          </div>
-          <div>
-            <span>剩余流量</span>
-            <strong>{formatBytes(usage?.data.remainingBytes)}</strong>
-          </div>
-          <div>
-            <span>累计上传</span>
-            <strong>{formatBytes(usage?.data.uploadBytes)}</strong>
-          </div>
-          <div>
-            <span>累计下载</span>
-            <strong>{formatBytes(usage?.data.downloadBytes)}</strong>
-          </div>
-          <div className="subscriptions-usage-expiry">
-            <span>到期时间</span>
-            <strong>{formatUsageExpiry(usage?.data.expiresAt)}</strong>
-            {usage?.data.expired !== undefined && (
-              <small>
-                {usage.data.expired
-                  ? "按提供时间已到期"
-                  : `采集时距到期约 ${usage.data.daysRemaining} 天`}
-              </small>
-            )}
-          </div>
-        </div>
-        <div className="subscriptions-usage-progress">
-          <span>已用占比 {formatUsagePercent(usage?.data.usedPercent)}</span>
-          {usage?.data.usedPercent !== undefined ? (
-            <progress
-              value={Math.min(100, usage.data.usedPercent)}
-              max={100}
-              aria-label={`订阅流量已用 ${formatUsagePercent(usage.data.usedPercent)}`}
-            />
-          ) : (
-            <span className="helper">占比无法计算</span>
-          )}
-        </div>
-        {usage && (
-          <p className="subscriptions-usage-source">
-            {usage.source === "manual" ? "手动录入" : `来自 ${usage.origin}`} ·
-            {dateLabel(usage.capturedAt)} 快照 ·
-            {usage.source === "header" && !usage.headerVisible
-              ? "用量头不可见，缺失数据未知。"
-              : "重新读取后更新"}
-          </p>
-        )}
-        {usage &&
-          (usage.data.errors.length > 0 || usage.data.warnings.length > 0) && (
-            <details
-              className="subscriptions-usage-notes"
-              open={usage.data.errors.length > 0}
-            >
-              <summary>
-                {usage.data.errors.length
-                  ? "流量响应头存在错误"
-                  : "流量数据说明"}
-              </summary>
-              <ul>
-                {[...usage.data.errors, ...usage.data.warnings].map(
-                  (item, index) => (
-                    <li key={index}>{item}</li>
-                  ),
-                )}
-              </ul>
-            </details>
-          )}
-        <details className="subscriptions-manual-usage">
-          <summary>手动补充流量数据</summary>
-          <label
-            className="subscriptions-field"
-            htmlFor="subscription-userinfo"
-          >
-            从服务商复制头值
-            <textarea
-              id="subscription-userinfo"
-              rows={2}
-              maxLength={32768}
-              spellCheck={false}
-              value={manualHeader}
-              onChange={(event) => setManualHeader(event.target.value)}
-              placeholder="upload=1024; download=2048; total=10737418240; expire=…"
-            />
-          </label>
-          <button
-            type="button"
-            className="button outline"
-            disabled={!manualHeader.trim()}
-            onClick={() => {
-              setUsage({
-                data: parseSubscriptionUsage(manualHeader),
-                source: "manual",
-                capturedAt: new Date().toISOString(),
-                headerVisible: true,
-                rawHeader: manualHeader,
-              });
-              setMessage(
-                "已读取手动提供的响应头；这不是向服务商发起的实时查询。",
-              );
-            }}
-          >
-            读取手动流量数据
-          </button>
-        </details>
-      </div>
-
-      <div className="subscriptions-import">
+      <nav className="subscriptions-jump" aria-label="订阅工作台区段">
+        <a href="#subscription-import">导入订阅</a><a href="#subscription-library">节点列表{nodes.length ? ` · ${nodes.length}` : ""}</a><a href="#subscription-live">实时上下行</a><a href="#subscription-probe">节点实测</a>
+      </nav>
+      <ol className="subscriptions-start" aria-label="订阅到分流的三个步骤">
+        <li><span>1</span><div><strong>拿到订阅</strong><p>在服务商后台复制「订阅链接」，或准备节点 .txt 文件。</p></div></li>
+        <li><span>2</span><div><strong>导入节点</strong><p>下面读取订阅。打不开时，用文件或粘贴内容继续。</p></div></li>
+        <li><span>3</span><div><strong>给应用选节点</strong><p>点「用于分流」选默认节点，再为应用单独指定去向。</p></div></li>
+      </ol>
+      <div className="subscriptions-import" id="subscription-import">
         <div className="subscriptions-card-heading">
           <h3>
             <Link2 size={18} />
-            添加节点
+            导入你的订阅
           </h3>
           <div
             className="subscriptions-mode"
@@ -701,7 +685,7 @@ export default function SubscriptionsPanel() {
         {mode === "replace" && nodes.length > 0 && (
           <p className="subscriptions-inline-warning">
             下一次成功导入会替换当前 {nodes.length}{" "}
-            个节点，并清除它们的检测结果；没有有效节点时保留列表。
+            个节点；相同连接保留分流引用和检测结果，没有有效节点时保留列表。
           </p>
         )}
         <label className="subscriptions-field" htmlFor="subscription-url">
@@ -732,7 +716,7 @@ export default function SubscriptionsPanel() {
               type="button"
               className="button primary"
               disabled={busy || !subscriptionUrl.trim()}
-              onClick={fetchSubscription}
+              onClick={() => void fetchSubscription()}
             >
               {busy ? (
                 <LoaderCircle size={16} className="subscriptions-spin" />
@@ -753,6 +737,7 @@ export default function SubscriptionsPanel() {
             )}
           </div>
         </label>
+        <p className="helper subscriptions-import-hint">订阅链接通常在服务商后台的「订阅 / 一键导入」里。请选通用节点链接或 Base64 格式。</p>
         {fetchedSource && (
           <p className="helper subscriptions-source">最近读取：{fetchedSource}</p>
         )}
@@ -896,6 +881,146 @@ export default function SubscriptionsPanel() {
         )}
       </div>
 
+      <div className="subscriptions-usage">
+        <div className="subscriptions-card-heading">
+          <div>
+            <h3>
+              <ArrowDownToLine size={18} />
+              订阅流量与到期
+            </h3>
+          </div>
+          <div className="subscriptions-actions"><span className="subscriptions-step-count">
+            {!usage
+              ? "尚未读取"
+              : usage.source === "manual"
+                ? "手动提供的数据"
+                : usage.headerVisible
+                  ? "服务商响应头"
+                  : "响应头不可见"}
+          </span>
+          <button type="button" className="button outline compact" disabled={busy || !lastSubscription.current} onClick={() => void fetchSubscription(true)}>
+            <RefreshCw size={15} className={busy ? "subscriptions-spin" : ""} />
+            {busy ? "正在刷新" : "刷新流量与节点"}
+          </button></div>
+        </div>
+        {!usage && <p className="subscriptions-usage-empty">读取订阅后，这里显示服务商提供的总额、剩余、上传、下载和到期时间。</p>}
+        {usage && <>
+        <div className="subscriptions-usage-metrics">
+          <div>
+            <span>总额度</span>
+            <strong>{formatBytes(usage?.data.totalBytes)}</strong>
+          </div>
+          <div>
+            <span>已用流量</span>
+            <strong>{formatBytes(usage?.data.usedBytes)}</strong>
+          </div>
+          <div>
+            <span>剩余流量</span>
+            <strong>{formatBytes(usage?.data.remainingBytes)}</strong>
+          </div>
+          <div>
+            <span>累计上传</span>
+            <strong>{formatBytes(usage?.data.uploadBytes)}</strong>
+          </div>
+          <div>
+            <span>累计下载</span>
+            <strong>{formatBytes(usage?.data.downloadBytes)}</strong>
+          </div>
+          <div className="subscriptions-usage-expiry">
+            <span>到期时间</span>
+            <strong>{formatUsageExpiry(usage?.data.expiresAt)}</strong>
+            {usage?.data.expired !== undefined && (
+              <small>
+                {usage.data.expired
+                  ? "按提供时间已到期"
+                  : `采集时距到期约 ${usage.data.daysRemaining} 天`}
+              </small>
+            )}
+          </div>
+        </div>
+        <div className="subscriptions-usage-progress">
+          <span>已用占比 {formatUsagePercent(usage?.data.usedPercent)}</span>
+          {usage?.data.usedPercent !== undefined ? (
+            <progress
+              value={Math.min(100, usage.data.usedPercent)}
+              max={100}
+              aria-label={`订阅流量已用 ${formatUsagePercent(usage.data.usedPercent)}`}
+            />
+          ) : (
+            <span className="helper">占比无法计算</span>
+          )}
+        </div>
+        </>}
+        {refreshError && <p className="subscriptions-inline-warning" role="status">本次读取失败。{usage ? "下面仍是上次成功取得的数据，未更新。" : "暂时没有可用的流量数据。"}</p>}
+        {usage && (
+          <p className="subscriptions-usage-source">
+            {usage.source === "manual" ? "手动录入" : `来自 ${usage.origin}`} ·
+            最后更新 {dateLabel(usage.capturedAt)} ·
+            {usage.source === "header" && !usage.headerVisible
+              ? "用量头不可见，缺失数据未知。"
+              : "服务商统计可能延后"}
+          </p>
+        )}
+        {usage &&
+          (usage.data.errors.length > 0 || usage.data.warnings.length > 0) && (
+            <details
+              className="subscriptions-usage-notes"
+              open={usage.data.errors.length > 0}
+            >
+              <summary>
+                {usage.data.errors.length
+                  ? "流量响应头存在错误"
+                  : "流量数据说明"}
+              </summary>
+              <ul>
+                {[...usage.data.errors, ...usage.data.warnings].map(
+                  (item, index) => (
+                    <li key={index}>{item}</li>
+                  ),
+                )}
+              </ul>
+            </details>
+          )}
+        <details className="subscriptions-manual-usage">
+          <summary>手动补充流量数据</summary>
+          <label
+            className="subscriptions-field"
+            htmlFor="subscription-userinfo"
+          >
+            从服务商复制头值
+            <textarea
+              id="subscription-userinfo"
+              rows={2}
+              maxLength={32768}
+              spellCheck={false}
+              value={manualHeader}
+              onChange={(event) => setManualHeader(event.target.value)}
+              placeholder="upload=1024; download=2048; total=10737418240; expire=…"
+            />
+          </label>
+          <button
+            type="button"
+            className="button outline"
+            disabled={!manualHeader.trim()}
+            onClick={() => {
+              setUsage({
+                data: parseSubscriptionUsage(manualHeader),
+                source: "manual",
+                capturedAt: new Date().toISOString(),
+                headerVisible: true,
+                rawHeader: manualHeader,
+              });
+              setMessage(
+                "已读取手动提供的响应头；这不是向服务商发起的实时查询。",
+              );
+            }}
+          >
+            读取手动流量数据
+          </button>
+        </details>
+      </div>
+
+
       {notice && (
         <div
           className={`subscriptions-notice ${notice.errors.length ? "has-errors" : ""}`}
@@ -925,7 +1050,7 @@ export default function SubscriptionsPanel() {
         </div>
       )}
 
-      <div className="subscriptions-library">
+      <div className="subscriptions-library" id="subscription-library">
         <div className="subscriptions-card-heading">
           <h3>
             <Server size={18} />
@@ -935,6 +1060,9 @@ export default function SubscriptionsPanel() {
             </span>
           </h3>
           <div className="subscriptions-actions">
+            <button type="button" className="button primary compact" disabled={!nodes.length} onClick={() => onConfigureNodes()}>
+              去配置分流 <ArrowRight size={15} />
+            </button>
             <button
               type="button"
               className="button outline compact"
@@ -1021,7 +1149,13 @@ export default function SubscriptionsPanel() {
           <div className="subscriptions-empty">
             <Server size={30} />
             <h3>先添加你的节点</h3>
-            <p>导入节点后，列表和实测结果会显示在这里。</p>
+            <p>一份订阅可以包含多个地区的节点。导入后，你可以让视频走日本节点、国内音乐直连。</p>
+            <details className="subscriptions-example">
+              <summary>没有订阅？先看格式示例</summary>
+              <p>下面只是格式示例，使用保留的 example.com 域名，不能连接网络。</p>
+              <code>{DEMO_LINK}</code>
+              <button type="button" className="button outline compact" onClick={() => void navigator.clipboard.writeText(DEMO_LINK).then(() => setMessage("已复制格式示例；这是不可连接的示例地址。"), () => setMessage("复制失败，请选中示例文本手动复制。"))}><Copy size={14} />复制格式示例</button>
+            </details>
           </div>
         ) : filtered.length === 0 ? (
           <div className="subscriptions-empty">
@@ -1093,6 +1227,7 @@ export default function SubscriptionsPanel() {
                         <span className="subscriptions-protocol">
                           {item.protocol.toUpperCase()}
                         </span>
+                        <button type="button" className="text-button accent subscriptions-use-node" onClick={() => onConfigureNodes(item.id)} aria-label={`将 ${item.name} 用于分流`}>用于分流 <ArrowRight size={13} /></button>
                       </td>
                       <td>
                         <code>
@@ -1215,7 +1350,32 @@ export default function SubscriptionsPanel() {
         )}
       </div>
 
-      <div className="subscriptions-probe">
+      <div className="subscriptions-live" id="subscription-live">
+        <div className="subscriptions-card-heading">
+          <div><h3><Server size={18} />实时上下行</h3><p className="helper">连接你正在运行的 Mihomo，查看总速度和实际代理链路。</p></div>
+          <span className="subscriptions-step-count" role="status">{monitorRunning ? liveSnapshot ? "正在连续采样" : "正在连接" : liveSnapshot ? "已停止 · 保留上次快照" : "尚未连接"}</span>
+        </div>
+        <p className="subscriptions-live-boundary">此功能适用于 Mihomo / Clash Meta。Shadowrocket 的实时流量和连接记录，请在小火箭客户端内查看。</p>
+        <details className="subscriptions-monitor-setup">
+          <summary>首次连接：运行本地监测器</summary>
+          <ol><li>启动 Mihomo，确认已开启 <code>external-controller: 127.0.0.1:9090</code>。</li><li><a href="/routekit_monitor.py" download>下载只读监测器</a>，在文件所在目录运行：<code>python3 routekit_monitor.py</code>。如果 controller 设置了 secret，把它保存在本地文件后用 <code>--secret-file 文件路径</code> 传入。</li><li>复制终端输出的「会话令牌」到下面。浏览器询问本地网络权限时允许访问。</li></ol>
+          <p>监测器只监听本机 127.0.0.1:8766；controller 地址可用 <code>--controller http://127.0.0.1:端口</code> 修改。自托管网页需加 <code>--origin https://你的网页域名</code>。</p>
+          <p>数据直接从本机读取，不经过 RouteKit 服务器；离开本页自动停止。<a href="https://wiki.metacubex.one/api/" target="_blank" rel="noopener noreferrer">Mihomo 官方 API</a></p>
+        </details>
+        <div className="subscriptions-monitor-connect">
+          <label className="subscriptions-field">本地监测器会话令牌<input type="password" autoComplete="off" spellCheck={false} value={monitorToken} disabled={monitorRunning} maxLength={512} onChange={(event) => setMonitorToken(event.target.value)} placeholder="从本地终端复制，仅在此会话使用" /></label>
+          {monitorRunning ? <button type="button" className="button outline" onClick={() => setMonitorRunning(false)}><Square size={14} />停止实时监测</button> : <button type="button" className="button primary" disabled={!monitorToken.trim()} onClick={() => { setMonitorError(""); setLiveSnapshot(undefined); setMonitorRunning(true); }}><RefreshCw size={15} />连接实时监测</button>}
+        </div>
+        {monitorError && <p className="subscriptions-inline-warning" role="alert">{monitorError}</p>}
+        {liveSnapshot && <>
+          <div className="subscriptions-live-metrics"><div><span>实时下载</span><strong>{rateLabel(liveSnapshot.downloadBytesPerSecond)}</strong></div><div><span>实时上传</span><strong>{rateLabel(liveSnapshot.uploadBytesPerSecond)}</strong></div><div><span>内核运行累计下载</span><strong>{formatBytes(Math.round(liveSnapshot.downloadedBytes))}</strong></div><div><span>内核运行累计上传</span><strong>{formatBytes(Math.round(liveSnapshot.uploadedBytes))}</strong></div></div>
+          <p className="subscriptions-usage-source">来自本机 Mihomo · {dateLabel(liveSnapshot.observedAt)} · 内核统计，不等于订阅计费额度</p>
+          {liveSnapshot.chains.length ? <div className="subscriptions-table-wrap" role="region" aria-label="实时代理链路，可横向滚动" tabIndex={0}><table className="subscriptions-live-table"><thead><tr><th>实际代理链路</th><th>活跃连接</th><th>下载增量速率</th><th>上传增量速率</th><th>活跃连接累计下载</th></tr></thead><tbody>{liveSnapshot.chains.map((chain) => <tr key={chain.name}><td>{chain.name}</td><td>{chain.connections}</td><td>{rateLabel(chain.downloadBytesPerSecond)}</td><td>{rateLabel(chain.uploadBytesPerSecond)}</td><td>{formatBytes(Math.round(chain.downloadedBytes))}</td></tr>)}</tbody></table></div> : <p className="subscriptions-usage-empty">内核当前没有活跃连接。通过该客户端访问网页后再看这里。</p>}
+          <p className="helper">链路速率只统计相邻两次都活跃的连接；新连接等待下一次采样，已结束连接不会继续展示。代理链保留原名称，可能含多个节点。</p>
+        </>}
+      </div>
+
+      <div className="subscriptions-probe" id="subscription-probe">
         <div className="subscriptions-card-heading">
           <div>
             <h3>
@@ -1421,11 +1581,19 @@ export default function SubscriptionsPanel() {
         <summary><Info size={15} />使用说明</summary>
         <div>
           <h3>导入与隐私</h3>
-          <p>节点仅留在当前页面内存，刷新后清空，不上传到 RouteKit。读取订阅时只请求你填写的服务；跨域不允许时，可粘贴内容或导入 .txt 文件，不经过转换服务器。节点链接和检测任务含有连接凭证，请作为私人文件保存。</p>
+          <p>未保存的节点库仅在当前会话中，刷新网页后清空。已绑定到配置的节点，会随你显式保存的方案保留（含凭证）。读取订阅时只请求你填写的服务；跨域不允许时，可粘贴内容或导入 .txt 文件，不经过转换服务器。节点链接和检测任务含有连接凭证，请作为私人文件保存。</p>
           <p>支持 SS、VMess、VLESS、Trojan、SOCKS5、HTTP / HTTPS 节点链接和 Base64 列表；最多 2 MB、500 个节点，暂不解析 Clash YAML。手动 SS 2022 节点需使用对应长度的 Base64 密钥。</p>
+          <h3>订阅该怎么选</h3>
+          <ul className="subscriptions-provider-checklist">
+            <li><strong>先核费用：</strong>在服务商订单页核对首期价、续费价、退款条件与自动续费。</li>
+            <li><strong>再核额度：</strong>确认上传是否计费、不同线路流量倍率、重置日、设备数和带宽限制。</li>
+            <li><strong>按自己线路试：</strong>用自己的移动 / 联通 / 电信网络，在常用时段测试延迟、丢连接和下载；先短期试用。</li>
+            <li><strong>核实来源：</strong>看服务商公开条款、隐私政策、联系方式和独立审计；“住宅 IP”“零日志”等标签需有证据。</li>
+          </ul>
+          <p>参考 <a href="https://ssd.eff.org/module/choosing-vpn-thats-right-you" target="_blank" rel="noopener noreferrer">EFF 的 VPN 选择指南</a>。本站不出售订阅；没有当前线路实测和可核对条款，就不把某家订阅标为“最好”。</p>
           <h3>流量与到期</h3>
-          <p>用量只对应最近读取或手动填写的一份订阅，是服务商提供的快照。本站不累计或改写用量；测速经过代理时可能消耗套餐流量。重新读取订阅才能获得新数据。</p>
-          <p>跨域读取用量需服务商暴露 Access-Control-Expose-Headers: Subscription-Userinfo。服务未提供或浏览器读不到时，数据保持未知，不代表没有用量、无限流量或永久有效。</p>
+          <p>用量只对应最近读取或手动填写的一份订阅，是服务商提供的快照。本站不累计或改写用量；测速经过代理时可能消耗套餐流量。点击「刷新流量与节点」查询新数据；当前订阅的增删会同步，相同连接保留分流引用，手动或其他来源节点保留。刷新地址只保存在本次会话中。</p>
+          <p>跨域读取用量需服务商暴露 Access-Control-Expose-Headers: Subscription-Userinfo（<a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Access-Control-Expose-Headers" target="_blank" rel="noopener noreferrer">浏览器规则</a>）。服务未提供或浏览器读不到时，数据保持未知，不代表没有用量、无限流量或永久有效。</p>
           <h3>实测与恢复</h3>
           <p>浏览器无法逐个切换这些代理。检测任务由你自己的 Python + Mihomo 检测器运行；导入结果只关联当前节点，不自动添加节点。刷新后先恢复原 routekit-job.json 中的节点和 ID，再导入结果。</p>
           <p>入口不等于出口。IP 位置与坐标是粗略信息，距离仅为地理直线估算，不能预测实际线路、质量或延迟；未知 IP 类型保持未知，不推断住宅属性。</p>

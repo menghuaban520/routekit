@@ -53,6 +53,8 @@ import {
   type Profile,
 } from "./core";
 
+import { proxyNodeIdentity, type ProxyNode } from "./core/subscriptions";
+import { nodeRoutingSupport, routingNodeBundle, routePolicyLabel } from "./core/node-routing";
 import NetworkPanel from "./components/NetworkPanel";
 import SubscriptionsPanel from "./components/SubscriptionsPanel";
 import DiagnosticsPanel from "./components/DiagnosticsPanel";
@@ -63,22 +65,22 @@ const workspaces = [
     id: "network",
     label: "网络概览",
     icon: Globe2,
-    title: "网络观测",
-    description: "查看出口、测量速度与连通，找到 DNS 和网络暴露检查入口。",
+    title: "网络检查",
+    description: "从当前连接到 DNS，一步一步找到网络问题。",
   },
   {
     id: "nodes",
     label: "订阅与节点",
     icon: Network,
-    title: "节点仓库",
+    title: "订阅与节点",
     description: "导入订阅、查看用量，结合本地实测结果挑选合适的节点。",
   },
   {
     id: "config",
     label: "分流配置",
     icon: GitBranch,
-    title: "路由编排",
-    description: "选应用、定分流，生成属于你的 Shadowrocket 配置。",
+    title: "分流配置",
+    description: "将应用交给合适的节点。",
   },
   {
     id: "diagnostics",
@@ -290,9 +292,12 @@ function AppEditor({
             spellCheck={false}
           />
         </label>
-        <p className="helper">
-          每行一个域名，自动包含其子域名。应用可能需要多个域名；这里不按进程识别应用。
-        </p>
+        <div className="domain-tutorial">
+          <strong>不知道域名怎么填？</strong>
+          <p>把网址中的域名取出来：<code>https://music.example.com/play</code> → <code>music.example.com</code>。每行一个，自动包含子域名，不填写 https://、路径或 *。</p>
+          <p>真实应用可能使用多个域名。先连接小火箭并打开应用，在小火箭的数据/连接记录里查看访问域名，再补充到这里。</p>
+          <button type="button" className="text-button accent" onClick={() => {setName("我的网站");setDomains("example.com\ncdn.example.net");}}>填入格式示例</button>
+        </div>
         <div className="setting-row">
           <span>连接方式</span>
           <PolicyControl
@@ -330,6 +335,44 @@ export default function App() {
     window.history.replaceState(null, "", url);
   }
   const [profile, setProfile] = useState<Profile>(createProfile);
+  const [nodes, setNodes] = useState<ProxyNode[]>([]);
+  const [downloaded, setDownloaded] = useState(false);
+  const nodeChoices = useMemo(() => {
+    const all = new Map((profile.nodeRouting?.nodes ?? []).map(node => [proxyNodeIdentity(node), node]));
+    nodes.forEach(node => { const key = proxyNodeIdentity(node); if (!all.has(key)) all.set(key, node); });
+    return [...all.values()];
+  }, [nodes, profile.nodeRouting?.nodes]);
+  const nodeBundle = useMemo(() => routingNodeBundle(profile), [profile]);
+  function bindNode(nodeId: string, appId?: string) {
+    const libraryNode = nodes.find(node => node.id === nodeId);
+    const selected = nodeChoices.find(node => node.id === nodeId) ?? (libraryNode ? nodeChoices.find(node => proxyNodeIdentity(node) === proxyNodeIdentity(libraryNode)) : undefined);
+    if (nodeId && !selected) { setMessage("节点已变更，请重新选择。"); return; }
+    nodeId = selected?.id ?? "";
+    if (selected && !nodeRoutingSupport(selected).supported) {
+      setMessage(nodeRoutingSupport(selected).reason ?? "此节点暂不能绑定配置。");
+      return;
+    }
+    setProfile(previous => {
+      const routing = {...previous.nodeRouting, nodes: previous.nodeRouting?.nodes ?? []};
+      if (appId) {
+        routing.appNodeIds = {...routing.appNodeIds};
+        if (nodeId) routing.appNodeIds[appId] = nodeId;
+        else delete routing.appNodeIds[appId];
+      } else {
+        if (nodeId) routing.defaultNodeId = nodeId;
+        else delete routing.defaultNodeId;
+      }
+      const used = new Set([routing.defaultNodeId, ...Object.values(routing.appNodeIds ?? {}), ...Object.values(routing.ruleNodeIds ?? {})].filter(Boolean));
+      routing.nodes = nodeChoices.filter(node => used.has(node.id));
+      return {...previous, nodeRouting: used.size ? routing : undefined};
+    });
+  }
+  function nodeSelect(value: string | undefined, label: string, appId?: string) {
+    return <select aria-label={label} value={value ?? ""} onChange={event => bindNode(event.target.value, appId)}>
+      <option value="">{appId ? "跟随默认代理" : "在小火箭选择节点"}</option>
+      {nodeChoices.map(node => <option key={node.id} value={node.id} disabled={!nodeRoutingSupport(node).supported}>{node.name} · {node.protocol.toUpperCase()}{!nodeRoutingSupport(node).supported ? "（暂不支持）" : ""}</option>)}
+    </select>;
+  }
   const [advanced, setAdvanced] = useState(false);
   const [tab, setTab] = useState<Tab>("apps");
   const [search, setSearch] = useState("");
@@ -347,6 +390,7 @@ export default function App() {
   const fileInput = useRef<HTMLInputElement>(null);
   const result = useMemo(() => compileProfile(profile), [profile]);
   const profileState = JSON.stringify(profile);
+  useEffect(() => setDownloaded(false), [profileState]);
   const ready = result.errors.length === 0;
   const compactRules = new Set([
     ...profile.apps.flatMap((app) =>
@@ -388,7 +432,20 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [message]);
   function patch(changes: Partial<Profile>) {
-    setProfile((p) => ({ ...p, ...changes }));
+    setProfile(p => {
+      const next = {...p, ...changes};
+      if (next.nodeRouting && (changes.apps || changes.rules)) {
+        const appIds = new Set(next.apps.map(app => app.id));
+        const ruleIds = new Set(next.rules.map(rule => rule.id));
+        const routing = {...next.nodeRouting,
+          appNodeIds: Object.fromEntries(Object.entries(next.nodeRouting.appNodeIds ?? {}).filter(([id]) => appIds.has(id))),
+          ruleNodeIds: Object.fromEntries(Object.entries(next.nodeRouting.ruleNodeIds ?? {}).filter(([id]) => ruleIds.has(id)))};
+        const used = new Set([routing.defaultNodeId, ...Object.values(routing.appNodeIds), ...Object.values(routing.ruleNodeIds)]);
+        routing.nodes = routing.nodes.filter(node => used.has(node.id));
+        next.nodeRouting = routing.nodes.length ? routing : undefined;
+      }
+      return next;
+    });
   }
   function changeApp(id: string, changes: Partial<AppRule>) {
     setProfile((p) => ({
@@ -441,6 +498,7 @@ export default function App() {
   function saveLocal() {
     if (!ready) return;
     try {
+      serializeProfile(profile);
       const data = readSaved();
       const same = data.findIndex((x) => x.profile.name === profile.name);
       const entry: Saved = {
@@ -477,7 +535,7 @@ export default function App() {
   async function importBackup(file?: File) {
     if (!file) return;
     try {
-      if (file.size > 512_000) throw new Error("方案文件不能超过 500 KB。");
+      if (file.size > 512 * 1024) throw new Error("方案文件不能超过 512 KB。");
       const imported = parseProfile(await file.text());
       setProfile(imported);
       setSearch("");
@@ -514,8 +572,20 @@ export default function App() {
           <a className="brand" href="./" aria-label="RouteKit 首页">
             <GitBranch size={31} strokeWidth={2.1} />
             <strong>RouteKit</strong>
-            <span>网络观测台</span>
+            <span>网络与分流工具</span>
           </a>
+        <nav className="workspace-navigation" aria-label="工具分类">
+          {workspaces.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              aria-current={activeView === id ? "page" : undefined}
+              onClick={() => changeWorkspace(id)}
+            >
+              <Icon size={18} />
+              {label}
+            </button>
+          ))}
+        </nav>
           <nav aria-label="帮助与项目">
             <button onClick={() => setModal("guide")} className="text-button">
               <BookOpen size={18} />
@@ -537,10 +607,7 @@ export default function App() {
                 <span>开源说明</span>
               </button>
             )}
-            <span className="local-status">
-              <span />
-              LOCAL WORKSPACE
-            </span>
+
           </nav>
         </div>
       </header>
@@ -548,6 +615,7 @@ export default function App() {
         <section className="intro">
           <div>
             <h1>{currentWorkspace.title}</h1>
+            <p>{currentWorkspace.description}</p>
           </div>
           {activeView === "config" && (
             <div className="mode-switch" role="group" aria-label="编辑模式">
@@ -567,28 +635,25 @@ export default function App() {
             </div>
           )}
         </section>
-        <nav className="workspace-navigation" aria-label="工具分类">
-          {workspaces.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              aria-current={activeView === id ? "page" : undefined}
-              onClick={() => changeWorkspace(id)}
-            >
-              <Icon size={18} />
-              {label}
-            </button>
-          ))}
-        </nav>
         <div hidden={activeView !== "network"}>
           <NetworkPanel />
         </div>
         <div hidden={activeView !== "nodes"}>
-          <SubscriptionsPanel />
+          <SubscriptionsPanel nodes={nodes} onNodesChange={setNodes} active={activeView === "nodes"} onConfigureNodes={(nodeId) => {
+            if (nodeId) bindNode(nodeId);
+            changeWorkspace("config"); setTab("apps");
+          }} />
         </div>
         <div hidden={activeView !== "diagnostics"}>
           <DiagnosticsPanel profile={profile} />
         </div>
         <div hidden={activeView !== "config"}>
+          <div className="workflow-steps" aria-label="配置步骤">
+            <button onClick={() => changeWorkspace("nodes")}><b>{nodeChoices.length ? <Check size={17}/> : "1"}</b><span><strong>导入订阅</strong><small>{nodeChoices.length ? `${nodeChoices.length} 个节点可选` : "已有节点也可直接配置"}</small></span><ArrowRight size={16}/></button>
+            <button onClick={() => setTab("apps")} className="current"><b>2</b><span><strong>应用分流</strong><small>为应用选择连接方式</small></span><ArrowRight size={16}/></button>
+            <button onClick={() => document.querySelector<HTMLButtonElement>(".download-button")?.focus()}><b>{downloaded ? <Check size={17}/> : "3"}</b><span><strong>下载配置</strong><small>{downloaded ? "已发起下载" : "预览并生成 .conf"}</small></span><ArrowRight size={16}/></button>
+            <button onClick={() => setModal("guide")}><b>4</b><span><strong>客户端验证</strong><small>导入、连接，再检查</small></span></button>
+          </div>
           <div className="client-toolbar">
             <div className="client-choice">
               <div className="client-tag">
@@ -662,7 +727,12 @@ export default function App() {
                 {tab === "apps" && (
                   <>
                     <div className="section-heading">
-                      <h2>应用规则</h2>
+                      <h2>应用与节点</h2>
+                      <p>直连使用当前网络，代理使用所选节点，拦截会阻止访问。</p>
+                    </div>
+                    <div className="default-node-setting">
+                      <label><span>默认代理节点</span>{nodeSelect(profile.nodeRouting?.defaultNodeId, "默认代理节点")}</label>
+                      <button className="text-button accent" onClick={() => changeWorkspace("nodes")}><Plus size={16}/>{nodeChoices.length ? "管理节点" : "导入节点"}</button>
                     </div>
                     <div className="app-toolbar">
                       <div className="search-field">
@@ -728,11 +798,10 @@ export default function App() {
                                 : ""}
                             </small>
                           </button>
-                          <PolicyControl
-                            value={app.policy}
-                            name={`${app.name}连接方式`}
-                            onChange={(p) => changeApp(app.id, { policy: p })}
-                          />
+                          <div className="app-routing-controls">
+                            <PolicyControl value={app.policy} name={`${app.name}连接方式`} onChange={p => changeApp(app.id, {policy:p})}/>
+                            {app.policy === "PROXY" && <label className="app-node-select"><span className="sr-only">{app.name}代理节点</span>{nodeSelect(profile.nodeRouting?.appNodeIds?.[app.id], `${app.name}代理节点`, app.id)}</label>}
+                          </div>
                           <button
                             className="icon-button delete-app"
                             aria-label={`移除 ${app.name}`}
@@ -1139,7 +1208,7 @@ export default function App() {
                       />
                     </label>
                     <Note>
-                      链式关系需要在客户端配置，本页不写入节点与密码，也不会把教程步骤伪装成已配置成功。导出的
+                      链式关系需要在客户端配置，链式代理需在小火箭中设置，也不会把教程步骤伪装成已配置成功。导出的
                       .conf 只控制分流与 DNS。
                     </Note>
                   </>
@@ -1307,20 +1376,22 @@ export default function App() {
                   {ready ? "可导出" : "需要修改"}
                 </span>
               </div>
+              <div className="route-flow" aria-label="分流工作方式"><span><Globe2 size={22}/>访问应用</span><ArrowRight size={17}/><span><ListFilter size={22}/>匹配规则</span><ArrowRight size={17}/><span><Network size={22}/>连接节点</span></div>
+              <div className="route-examples">{profile.apps.slice(0,4).map(app => <div key={app.id}><span>{app.name}</span><ArrowRight size={14}/><strong>{routePolicyLabel(profile, app.policy, {appId:app.id})}</strong></div>)}</div>
               <dl className="config-summary">
                 <div>
                   <dt>
                     <Globe2 size={17} />
                     国内 IP
                   </dt>
-                  <dd>{labels[profile.domesticPolicy]}</dd>
+                  <dd>{routePolicyLabel(profile, profile.domesticPolicy)}</dd>
                 </div>
                 <div>
                   <dt>
                     <Network size={17} />
                     其他流量
                   </dt>
-                  <dd>{labels[profile.finalPolicy]}</dd>
+                  <dd>{routePolicyLabel(profile, profile.finalPolicy)}</dd>
                 </div>
                 <div>
                   <dt>
@@ -1336,6 +1407,71 @@ export default function App() {
                   </dd>
                 </div>
               </dl>
+              {!!result.errors.length && (
+                <div className="validation-errors" role="alert">
+                  <strong>修改后即可导出</strong>
+                  <ul>
+                    {result.errors.map((error, i) => (
+                      <li key={i}>{error}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <label className="filename-label">
+                方案名称
+                <div className="filename-field">
+                  <input
+                    value={profile.name}
+                    onChange={(e) => patch({ name: e.target.value })}
+                    maxLength={60}
+                    aria-label="方案名称"
+                    placeholder="my-routes"
+                  />
+                  <span>.conf</span>
+                </div>
+              </label>
+              {!!profile.nodeRouting?.nodes.length && <div className="node-export-guide">
+                <strong>{nodeBundle.referenceCount ? "先导入配套节点，再导入配置" : "已将所选节点写入配置"}</strong>
+                <p>{nodeBundle.referenceCount ? "配套节点保留原协议参数。先把下方节点文件导入小火箭，保留 RK_ 开头的名称，再导入 .conf。" : "导入后可按应用规则使用对应节点。"} 下载文件和本地方案包含节点凭证，请仅自己保管。</p>
+                {nodeBundle.referenceCount > 0 && <button className="button outline" disabled={!ready || !!nodeBundle.errors.length} onClick={() => download(nodeBundle.content, `${fileName(profile.name)}.nodes.txt`)}><Download size={16}/>下载配套节点（含凭证）</button>}
+              </div>}
+              <div className="export-actions">
+                <button
+                  className="button primary download-button"
+                  disabled={!ready}
+                  onClick={() => {
+                    download(result.content, `${fileName(profile.name)}.conf`);
+                    setDownloaded(true);
+                    setMessage("已发起 .conf 下载，请在浏览器下载列表查看。");
+                  }}
+                >
+                  <Download size={19} />
+                  下载 .conf
+                </button>
+                <button
+                  className="button outline"
+                  disabled={!ready}
+                  onClick={saveLocal}
+                >
+                  <Save size={18} />
+                  保存到本地
+                </button>
+              </div>
+              <p className="save-hint" hidden={!lastSaved}>
+                {lastSaved && savedState === profileState ? (
+                  <>
+                    <CheckCheck size={15} />
+                    {lastSaved} 已保存到此浏览器
+                  </>
+                ) : (
+                  <>
+                    <Info size={15} />
+                    {lastSaved
+                      ? "有修改尚未保存"
+                      : "仅在点击保存时写入此浏览器"}
+                  </>
+                )}
+              </p>
               <div className="code-window">
                 <div className="code-toolbar">
                   <span>
@@ -1390,76 +1526,17 @@ export default function App() {
                   <span>{fullPreview ? "UTF-8" : "通用设置已折叠"}</span>
                 </div>
               </div>
-              {!!result.errors.length && (
-                <div className="validation-errors" role="alert">
-                  <strong>修改后即可导出</strong>
-                  <ul>
-                    {result.errors.map((error, i) => (
-                      <li key={i}>{error}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              <label className="filename-label">
-                方案名称
-                <div className="filename-field">
-                  <input
-                    value={profile.name}
-                    onChange={(e) => patch({ name: e.target.value })}
-                    maxLength={60}
-                    aria-label="方案名称"
-                    placeholder="my-routes"
-                  />
-                  <span>.conf</span>
-                </div>
-              </label>
-              <div className="export-actions">
-                <button
-                  className="button primary download-button"
-                  disabled={!ready}
-                  onClick={() => {
-                    download(result.content, `${fileName(profile.name)}.conf`);
-                    setMessage("已发起 .conf 下载，请在浏览器下载列表查看。");
-                  }}
-                >
-                  <Download size={19} />
-                  下载 .conf
-                </button>
-                <button
-                  className="button outline"
-                  disabled={!ready}
-                  onClick={saveLocal}
-                >
-                  <Save size={18} />
-                  保存到本地
-                </button>
-              </div>
-              <p className="save-hint" hidden={!lastSaved}>
-                {lastSaved && savedState === profileState ? (
-                  <>
-                    <CheckCheck size={15} />
-                    {lastSaved} 已保存到此浏览器
-                  </>
-                ) : (
-                  <>
-                    <Info size={15} />
-                    {lastSaved
-                      ? "有修改尚未保存"
-                      : "仅在点击保存时写入此浏览器"}
-                  </>
-                )}
-              </p>
               <div className="backup-actions">
                 <button
                   className="text-button"
                   disabled={!ready}
                   onClick={() => {
-                    download(
-                      serializeProfile(profile),
-                      `${fileName(profile.name)}.routekit.json`,
-                      "application/json",
-                    );
-                    setMessage("已发起方案备份下载。");
+                    try {
+                      download(serializeProfile(profile), `${fileName(profile.name)}.routekit.json`, "application/json");
+                      setMessage("已发起方案备份下载。");
+                    } catch (error) {
+                      setMessage(error instanceof Error ? error.message : "方案备份无法导出，请检查节点和规则。");
+                    }
                   }}
                 >
                   <Download size={14} />
@@ -1512,7 +1589,7 @@ export default function App() {
           <button onClick={() => setModal("guide")}>使用指南</button>
           <span>·</span>
           <span>MIT License</span>
-          <span className="version">v0.3.0</span>
+          <span className="version">v0.4.0</span>
         </div>
       </footer>
       {message && (
@@ -1692,9 +1769,9 @@ export default function App() {
             <div>
               <span>1</span>
               <section>
-                <h3>选择默认连接方式</h3>
+                <h3>导入已有订阅或节点</h3>
                 <p>
-                  在基础设置选择国内与其他流量的去向。直连使用当前所在地网络；代理使用客户端所选节点。
+                  先在“订阅与节点”粘贴订阅链接或导入节点文件，再点“用于分流”。没有订阅也可以先编排规则，之后在小火箭选择自己的节点。
                 </p>
               </section>
             </div>
@@ -1703,7 +1780,7 @@ export default function App() {
               <section>
                 <h3>给常用应用设定分流</h3>
                 <p>
-                  添加酷狗、网易云或自定义应用。应用规则优先于国内与默认规则；共用域名可能同时影响其他应用。
+                  为国内应用选择直连，为需要代理的应用选择默认节点或单独指定节点。自定义应用填域名，不填完整网址；应用规则优先于国内与兜底规则，共用域名也会影响其他应用。
                 </p>
               </section>
             </div>
@@ -1712,8 +1789,7 @@ export default function App() {
               <section>
                 <h3>下载并导入 .conf</h3>
                 <p>
-                  点击“下载
-                  .conf”，在小火箭的“配置”页使用本地文件导入，或从系统文件的分享菜单交给小火箭。入口可能随版本不同。
+                  如果页面出现“下载配套节点”，先导入该文件并保留 RK_ 开头的节点名。再下载 .conf，在小火箭“配置”页从本地文件导入，或通过系统分享菜单打开。入口依版本而异。
                 </p>
               </section>
             </div>
@@ -1722,8 +1798,7 @@ export default function App() {
               <section>
                 <h3>启用配置，选择节点，再验证</h3>
                 <p>
-                  启用导入的配置，将全局路由设为“配置”，在主页选择已拥有的可用节点后连接。实际测试应用访问、出口
-                  IP 与 DNS。
+                  启用导入的配置，将全局路由设为“配置”。指定节点的应用按绑定连接，未指定的代理流量使用客户端所选节点。连接后打开应用，并在“网络检查”验证出口、连通和 DNS。
                 </p>
               </section>
             </div>
@@ -1736,9 +1811,7 @@ export default function App() {
             </p>
             <h3>开源与后续客户端</h3>
             <p>
-              代码采用 MIT License。首版支持 Shadowrocket；Clash / Mihomo 与
-              v2rayN
-              后续通过独立适配器接入。网站没有统计脚本，后端仅返回当前访问的 IP
+              代码采用 MIT License。当前配置导出支持 Shadowrocket。Clash/Mihomo 可使用本地检测器及实时流量监测，其他客户端的完整配置格式后续适配。网站没有统计脚本，后端仅返回当前访问的 IP
               信息；订阅不会经过本站后端。
             </p>
             {REPO_URL && (

@@ -24,3 +24,6 @@ blob-report/
 # Keep static assets even when a workstation globally ignores Public/.
 !public/
 !public/**
+
+# Local Python import caches are never static assets.
+public/__pycache__/

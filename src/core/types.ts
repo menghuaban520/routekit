@@ -1,4 +1,12 @@
+import type { ProxyNode } from "./subscriptions";
+
 export type Policy = "DIRECT" | "PROXY" | "REJECT";
+export type NodeRouting = {
+  nodes: ProxyNode[];
+  defaultNodeId?: string;
+  appNodeIds?: Record<string, string>;
+  ruleNodeIds?: Record<string, string>;
+};
 export type AppRule = {
   id: string;
   name: string;
@@ -30,6 +38,7 @@ export type Profile = {
   rules: CustomRule[];
   hosts: string;
   general: string;
+  nodeRouting?: NodeRouting;
 };
 
 // The compiler owns validation and rule order; each adapter owns its file syntax.
@@ -38,6 +47,8 @@ export type NormalizedRule = {
   value: string;
   policy: Policy;
   noResolve: boolean;
+  // A compiler-created alias, never a raw user-supplied policy string.
+  target?: string;
 };
 export type GeneralOption = { key: string; value: string };
 export type HostMapping = { hostname: string; address: string };
@@ -47,6 +58,8 @@ export type ExportModel = {
   general: GeneralOption[];
   rules: NormalizedRule[];
   hosts: HostMapping[];
+  proxies?: { alias: string; definition: string }[];
+  externalNodes?: { alias: string }[];
 };
 export interface ConfigExporter {
   id: string;

@@ -105,7 +105,7 @@ test("network overview only measures on request and reports real response failur
   });
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "网络观测", exact: true }),
+    page.getByRole("heading", { name: "网络检查", exact: true }),
   ).toBeVisible();
   expect(ipRequests).toBe(0);
   expect(latencyRequests).toBe(0);
@@ -127,9 +127,72 @@ test("network overview only measures on request and reports real response failur
   await expect(
     page.getByTestId("throughput-final"),
   ).toHaveText("—");
+  await page.getByRole("button", { name: "泄漏检查", exact: true }).click();
   await expect(
     page.getByRole("link", { name: /DNS 泄漏测试/ }),
   ).toHaveAttribute("href", "https://www.dnsleaktest.com/");
+});
+
+test("host queries are explicit and show real DNS records with actionable missing-answer results", async ({ page }) => {
+  const requests: string[] = [];
+  await page.route("https://cloudflare-dns.com/dns-query**", (route) => {
+    requests.push(route.request().url());
+    return route.fulfill({ json: { Status: 0, AD: true, Answer: [{ name: "example.com.", type: 1, TTL: 180, data: "93.184.215.14" }] } });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "主机查询", exact: true }).click();
+  expect(requests).toEqual([]);
+  const input = page.getByRole("textbox", { name: "公网域名或 IP", exact: true });
+  await input.fill("example.com");
+  await page.getByRole("button", { name: "查询主机", exact: true }).click();
+  await expect(page.getByRole("cell", { name: "93.184.215.14", exact: true })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "180 秒", exact: true })).toBeVisible();
+  expect(new URL(requests[0]).searchParams.get("type")).toBe("A");
+  await input.fill("1.1.1.1");
+  await expect(page.getByRole("cell", { name: "93.184.215.14", exact: true })).toBeHidden();
+  await page.route("https://cloudflare-dns.com/dns-query**", (route) => {
+    requests.push(route.request().url());
+    return route.fulfill({ json: { Status: 3 } });
+  });
+  await page.getByRole("button", { name: "查询主机", exact: true }).click();
+  await expect(page.getByText(/此名称不存在（NXDOMAIN）/)).toBeVisible();
+  expect(new URL(requests[1]).searchParams.get("type")).toBe("PTR");
+  expect(new URL(requests[1]).searchParams.get("name")).toBe("1.1.1.1.in-addr.arpa");
+  await input.fill("https://private.example/sub?token=secret");
+  await page.getByRole("button", { name: "查询主机", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("不含协议、端口、路径或订阅链接");
+  expect(requests).toHaveLength(2);
+});
+
+test("host failure and cancellation do not imply connectivity or leak success", async ({ page }) => {
+  await page.route("https://cloudflare-dns.com/dns-query**", (route) => route.abort("failed"));
+  await page.goto("/");
+  await page.getByRole("button", { name: "主机查询", exact: true }).click();
+  await page.getByRole("textbox", { name: "公网域名或 IP", exact: true }).fill("example.com");
+  await page.getByRole("button", { name: "查询主机", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("无法连接 cloudflare-dns.com");
+  await expect(page.getByRole("alert")).not.toContainText("Failed to fetch");
+  await page.route("https://cloudflare-dns.com/dns-query**", () => new Promise(() => {}));
+  await page.getByRole("button", { name: "查询主机", exact: true }).click();
+  await page.getByRole("button", { name: "停止查询", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("主机查询已停止");
+  await expect(page.getByRole("button", { name: "查询主机", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "泄漏检查", exact: true }).click();
+  await expect(page.getByText("泄漏检查，要对照结果才算完成", { exact: true })).toBeVisible();
+  await expect(page.getByText(/不会把“已打开”标记为“已通过”/)).toBeVisible();
+  await expect(page.getByRole("link", { name: "WebRTC IP 暴露", exact: true })).toHaveAttribute("href", "https://browserleaks.com/webrtc");
+});
+
+test("network subtabs fit a phone and keep readable labels", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto("/");
+  for (const name of ["当前连接", "主机查询", "泄漏检查"]) {
+    await page.getByRole("button", { name, exact: true }).click();
+    const width = await page.evaluate(() => ({ content: document.documentElement.scrollWidth, viewport: document.documentElement.clientWidth }));
+    expect(width.content, name).toBeLessThanOrEqual(width.viewport + 1);
+    const size = await page.getByRole("button", { name, exact: true }).evaluate((element) => parseFloat(getComputedStyle(element).fontSize));
+    expect(size).toBeGreaterThanOrEqual(12);
+  }
 });
 
 test("speed requires full bounded response before showing a value", async ({

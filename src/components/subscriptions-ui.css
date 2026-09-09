@@ -169,17 +169,17 @@
 .subscriptions-notice {
   padding: 16px 20px;
   margin-top: 20px;
-  border: 1px solid #285549;
-  background: #112b24;
-  color: #a4ead0;
+  border: 1px solid #bddcca;
+  background: #edf8f1;
+  color: #16613e;
   border-radius: 8px;
   font-size: 12px;
   overflow-wrap: anywhere;
 }
 .subscriptions-notice.has-errors {
-  border-color: #655030;
-  color: #efc57b;
-  background: #2e2519;
+  border-color: #edce8d;
+  color: #936019;
+  background: #fff8eb;
 }
 .subscriptions-notice strong {
   display: block;
@@ -331,13 +331,13 @@
 }
 .subscriptions-table small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.6;
   margin-top: 4px;
 }
 .subscriptions-table code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: 12px;
 }
 .subscriptions-number {
   font-variant-numeric: tabular-nums;
@@ -353,7 +353,7 @@
   display: inline-block;
   border: 1px solid var(--line);
   color: var(--muted);
-  font-size: 9px;
+  font-size: 12px;
   border-radius: 3px;
   padding: 0 5px;
   margin-top: 7px;
@@ -362,7 +362,7 @@
 .subscriptions-status {
   display: inline-flex;
   align-items: center;
-  font-size: 10px;
+  font-size: 12px;
   border-radius: 4px;
   padding: 2px 7px;
 }
@@ -371,36 +371,36 @@
   color: var(--muted);
 }
 .subscriptions-status.ok {
-  background: #112b24;
-  color: #8ce2b6;
+  background: #edf8f1;
+  color: #16613e;
 }
 .subscriptions-status.error {
-  background: #2e2519;
-  color: #efc57b;
+  background: #fff8eb;
+  color: #936019;
 }
 .subscriptions-unmeasured {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .subscriptions-ip-type {
   display: inline-block;
-  font-size: 10px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 5px;
 }
 .subscriptions-row-error {
-  font-size: 10px;
-  color: #efc57b;
+  font-size: 12px;
+  color: #936019;
   margin-top: 6px;
   overflow-wrap: anywhere;
 }
 .subscriptions-table details {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 7px;
 }
 .subscriptions-danger {
-  color: #ff9b99;
+  color: #b23c38;
 }
 .subscriptions-probe .subscriptions-card-heading {
   align-items: flex-start;
@@ -409,7 +409,7 @@
   margin: 8px 0 0;
 }
 .subscriptions-step-count {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   white-space: nowrap;
 }
@@ -438,7 +438,7 @@
   display: block;
   margin-top: 5px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.7;
 }
 .subscriptions-origin .subscriptions-field {
@@ -454,7 +454,7 @@
   flex-direction: column;
   gap: 4px;
   width: 50%;
-  font-size: 11px;
+  font-size: 12px;
 }
 .subscriptions-coordinate-fields input {
   width: 100%;
@@ -479,7 +479,7 @@
   height: 22px;
   background: color-mix(in srgb, var(--accent) 10%, var(--panel));
   color: var(--accent);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   margin-right: 8px;
 }
@@ -488,13 +488,13 @@
 }
 .subscriptions-probe-steps p {
   margin: 10px 0 12px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .subscriptions-probe-steps .button {
   padding: 8px 10px;
   min-height: 35px;
-  font-size: 11px;
+  font-size: 12px;
 }
 .subscriptions-command {
   display: flex;
@@ -506,7 +506,7 @@
   gap: 6px;
 }
 .subscriptions-command code {
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.65;
   overflow-wrap: anywhere;
   color: var(--text);
@@ -516,9 +516,9 @@
 }
 .subscriptions-inline-warning {
   display: block;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.7;
-  color: #efc57b;
+  color: #936019;
   margin-bottom: 12px;
 }
 .subscriptions-message {
@@ -539,7 +539,7 @@
 }
 .subscriptions-usage-metrics span {
   display: block;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   margin-bottom: 7px;
 }
@@ -560,14 +560,14 @@
 .subscriptions-usage-expiry small {
   display: block;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   margin-top: 3px;
 }
 .subscriptions-usage-progress {
   display: flex;
   gap: 14px;
   align-items: center;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 20px;
 }
@@ -597,13 +597,13 @@
 }
 .subscriptions-usage-source {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   margin-top: 13px;
   overflow-wrap: anywhere;
 }
 .subscriptions-usage-notes {
-  font-size: 11px;
-  color: #efc57b;
+  font-size: 12px;
+  color: #936019;
   margin-top: 12px;
 }
 .subscriptions-usage-notes summary,
@@ -645,13 +645,13 @@
   font-size: 12px;
 }
 .subscriptions-restore p {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 4px;
 }
 .subscriptions-restore .button {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: 12px;
 }
 .subscriptions-help {
   border-top: 1px solid var(--line);
@@ -712,7 +712,7 @@
     font-size: 17px;
   }
   .subscriptions-usage-expiry strong {
-    font-size: 11px;
+    font-size: 12px;
   }
   .subscriptions-restore {
     align-items: flex-start;
@@ -782,3 +782,52 @@
     animation: none;
   }
 }
+
+/* Readable, light workspace; shared colors follow the site tokens. */
+.subscriptions-panel { font-size: 14px; line-height: 1.65; }
+.subscriptions-panel input:not([type="checkbox"]), .subscriptions-panel select, .subscriptions-panel textarea { font-size: 14px; background: var(--panel); }
+.subscriptions-panel .button { box-shadow: none; min-height: 38px; font-size: 13px; }
+.subscriptions-heading h2 { font-size: 20px; }
+.subscriptions-heading p { font-size: 14px; }
+.subscriptions-start { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; list-style: none; padding: 20px 0 0; margin: 0; }
+.subscriptions-start li { display: flex; gap: 11px; }
+.subscriptions-start li > span { display: grid; place-items: center; flex: 0 0 27px; height: 27px; color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, white); border-radius: 50%; font-size: 13px; font-weight: 650; }
+.subscriptions-start strong { color: var(--text); font-size: 14px; }
+.subscriptions-start p { color: var(--muted); font-size: 13px; line-height: 1.6; margin-top: 5px; }
+.subscriptions-import-hint { margin-bottom: 14px !important; }
+.subscriptions-usage-empty { color: var(--muted); font-size: 14px; }
+.subscriptions-usage-source { margin-top: 15px; }
+.subscriptions-example { max-width: 620px; text-align: left; width: 100%; margin-top: 4px; }
+.subscriptions-example summary { text-align: center; color: var(--accent); cursor: pointer; font-size: 13px; }
+.subscriptions-example p { margin: 14px 0 8px; max-width: none; }
+.subscriptions-example code { display: block; padding: 12px; background: var(--surface); overflow-wrap: anywhere; font-size: 12px; color: var(--text); border-radius: 6px; }
+.subscriptions-example button { margin-top: 12px; }
+.subscriptions-use-node { display: flex; gap: 5px; font-size: 12px; margin-top: 10px; white-space: nowrap; }
+.subscriptions-provider-checklist { padding-left: 20px; display: grid; gap: 9px; margin-bottom: 14px; }
+.subscriptions-help a { color: var(--accent); text-decoration: underline; }
+@media (max-width: 760px) { .subscriptions-start { grid-template-columns: 1fr; gap: 14px; } .subscriptions-start p { margin-top: 2px; } }
+@media (prefers-reduced-motion: reduce) { .subscriptions-spin { animation: none; } }
+.subscriptions-live { background: var(--panel); padding: 24px; border: 1px solid var(--line); border-radius: 12px; margin-top: 22px; }
+.subscriptions-live .subscriptions-card-heading .helper { margin-bottom: 0; }
+.subscriptions-live-boundary { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
+.subscriptions-monitor-setup { font-size: 13px; line-height: 1.75; color: var(--muted); }
+.subscriptions-monitor-setup summary { color: var(--accent); cursor: pointer; }
+.subscriptions-monitor-setup ol { padding-left: 20px; margin: 12px 0; display: grid; gap: 7px; }
+.subscriptions-monitor-setup code { overflow-wrap: anywhere; color: var(--text); }
+.subscriptions-monitor-setup a { color: var(--accent); text-decoration: underline; }
+.subscriptions-monitor-connect { display: flex; align-items: flex-end; gap: 12px; margin: 18px 0 12px; }
+.subscriptions-monitor-connect label { flex: 1; }
+.subscriptions-monitor-connect button { flex-shrink: 0; }
+.subscriptions-live-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 20px 0; gap: 20px; }
+.subscriptions-live-metrics span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+.subscriptions-live-metrics strong { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.subscriptions-live-table { width: 100%; min-width: 760px; text-align: left; border-collapse: collapse; font-size: 13px; }
+.subscriptions-live-table th { font-weight: 500; color: var(--muted); background: var(--surface); }
+.subscriptions-live-table th, .subscriptions-live-table td { padding: 12px; border-bottom: 1px solid var(--line); }
+.subscriptions-live-table td:first-child { min-width: 170px; max-width: 330px; overflow-wrap: anywhere; }
+@media (max-width: 760px) { .subscriptions-live { padding: 17px; } .subscriptions-live-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .subscriptions-live-metrics strong { font-size: 20px; } .subscriptions-monitor-connect { flex-direction: column; align-items: stretch; } }
+.subscriptions-jump { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 20px; }
+.subscriptions-jump a { color: var(--muted); text-decoration: none; padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; background: var(--panel); }
+.subscriptions-jump a:hover { color: var(--accent); border-color: var(--accent); }
+.subscriptions-jump a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.subscriptions-import, .subscriptions-library, .subscriptions-live, .subscriptions-probe { scroll-margin-top: 24px; }

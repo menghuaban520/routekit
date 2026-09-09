@@ -4,6 +4,7 @@ import {
   type Policy,
   type Profile,
 } from "./index";
+import { compileRoutingNodes, type CompiledRoutingNode } from "./node-routing";
 
 export type DiagnosticStatus =
   "matched" | "needs-ip" | "needs-country" | "policy-only" | "invalid";
@@ -15,6 +16,9 @@ export type DiagnosticResult = {
   countryHint?: string;
   status: DiagnosticStatus;
   policy: Policy | "unknown";
+  nodeId?: string;
+  nodeName?: string;
+  nodeMode?: "embedded" | "reference";
   matchRule: string | null;
   candidateRule?: string;
   reason: string;
@@ -48,6 +52,9 @@ type Rule = {
   type: string;
   value: string;
   policy: Policy;
+  nodeId?: string;
+  nodeName?: string;
+  nodeMode?: "embedded" | "reference";
   noResolve: boolean;
   network?: { address: Address; prefix: number };
 };
@@ -141,7 +148,7 @@ function parseInput(raw: string): Input {
 
 // Read the exported configuration, so normalization, deduplication and rule order
 // remain owned by the actual client compiler rather than a parallel rule builder.
-function parseRules(content: string): Rule[] {
+function parseRules(content: string, nodes: CompiledRoutingNode[]): Rule[] {
   let section = "";
   const rules: Rule[] = [];
   for (const raw of content.split(/\r?\n/)) {
@@ -154,6 +161,7 @@ function parseRules(content: string): Rule[] {
     const fields = text.split(",").map((value) => value.trim());
     const type = fields[0];
     const policy = fields[type === "FINAL" ? 1 : 2];
+    const node = nodes.find((node) => node.alias === policy);
     if (
       ![
         "DOMAIN",
@@ -164,14 +172,21 @@ function parseRules(content: string): Rule[] {
         "GEOIP",
         "FINAL",
       ].includes(type) ||
-      !["DIRECT", "PROXY", "REJECT"].includes(policy)
+      (!node && !["DIRECT", "PROXY", "REJECT"].includes(policy))
     )
       throw new Error(`检查器暂不支持生成规则：${text}`);
     const rule: Rule = {
       text,
       type,
       value: type === "FINAL" ? "" : fields[1],
-      policy: policy as Policy,
+      policy: node ? "PROXY" : (policy as Policy),
+      ...(node
+        ? {
+            nodeId: node.node.id,
+            nodeName: node.node.name,
+            nodeMode: node.mode,
+          }
+        : {}),
       noResolve: fields.slice(3).includes("no-resolve"),
     };
     if (type === "IP-CIDR" || type === "IP-CIDR6") {
@@ -226,7 +241,14 @@ function diagnose(
   rules: Rule[],
 ): Pick<
   DiagnosticResult,
-  "status" | "policy" | "matchRule" | "candidateRule" | "reason"
+  | "status"
+  | "policy"
+  | "nodeId"
+  | "nodeName"
+  | "nodeMode"
+  | "matchRule"
+  | "candidateRule"
+  | "reason"
 > {
   const possible: { rule: Rule; uncertainty: "needs-ip" | "needs-country" }[] =
     [];
@@ -241,6 +263,13 @@ function diagnose(
       return {
         status: "matched",
         policy: rule.policy,
+        ...(rule.nodeId
+          ? {
+              nodeId: rule.nodeId,
+              nodeName: rule.nodeName,
+              nodeMode: rule.nodeMode,
+            }
+          : {}),
         matchRule: rule.text,
         reason:
           rule.type === "GEOIP"
@@ -252,10 +281,20 @@ function diagnose(
       pending.uncertainty === "needs-ip"
         ? "未提供域名的解析 IP"
         : "未提供 IP 的国家/地区提示";
-    const allSame = possible.every((item) => item.rule.policy === rule.policy);
+    const allSame = possible.every(
+      (item) =>
+        item.rule.policy === rule.policy && item.rule.nodeId === rule.nodeId,
+    );
     return {
       status: allSame ? "policy-only" : pending.uncertainty,
       policy: allSame ? rule.policy : "unknown",
+      ...(allSame && rule.nodeId
+        ? {
+            nodeId: rule.nodeId,
+            nodeName: rule.nodeName,
+            nodeMode: rule.nodeMode,
+          }
+        : {}),
       matchRule: null,
       candidateRule: rule.text,
       reason: allSame
@@ -299,7 +338,7 @@ export function diagnoseBatch(
     };
   let rules: Rule[];
   try {
-    rules = parseRules(compiled.content);
+    rules = parseRules(compiled.content, compileRoutingNodes(profile));
   } catch (error) {
     return { results: [], errors: [(error as Error).message], ruleCount: 0 };
   }
@@ -368,6 +407,8 @@ export function diagnosticsToCsv(results: DiagnosticResult[]): string {
       "手动地区提示",
       "状态",
       "策略",
+      "绑定节点",
+      "节点配置方式",
       "命中规则",
       "后续候选规则",
       "说明",
@@ -383,6 +424,12 @@ export function diagnosticsToCsv(results: DiagnosticResult[]): string {
       result.countryHint ?? "",
       DIAGNOSTIC_STATUS_LABELS[result.status],
       result.policy,
+      result.nodeName ?? "",
+      result.nodeMode === "reference"
+        ? "需先导入配套节点"
+        : result.nodeMode === "embedded"
+          ? "内嵌节点"
+          : "",
       result.matchRule ?? "",
       result.candidateRule ?? "",
       result.reason,

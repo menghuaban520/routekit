@@ -13,7 +13,7 @@
 .diagnostics-panel .helper {
   line-height: 1.7;
   padding: 0;
-  font-size: 11px;
+  font-size: 12px;
 }
 .diagnostics-actions {
   display: flex;
@@ -37,8 +37,8 @@
 }
 .diagnostics-stale {
   border-left: 3px solid #c6a05d;
-  background: #2e2519;
-  color: #efc57b;
+  background: #fff7e8;
+  color: #895c12;
   padding: 10px 12px;
   font-size: 12px;
   line-height: 1.7;
@@ -61,7 +61,7 @@
 .diagnostics-results-heading h3 span {
   display: block;
   margin-top: 5px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 400;
   color: var(--muted);
 }
@@ -108,7 +108,7 @@
   margin: 3px 0;
 }
 .diagnostics-table small {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 4px;
 }
@@ -117,12 +117,12 @@
   overflow-wrap: anywhere;
 }
 .diagnostics-table code {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--accent);
 }
 .diagnostics-policy {
   display: inline-block;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   padding: 2px 7px;
   border-radius: 4px;
@@ -130,21 +130,21 @@
 }
 .diagnostics-policy.direct {
   color: var(--accent);
-  background: #112b24;
+  background: #e8f6ef;
 }
 .diagnostics-policy.proxy {
-  color: #9cc9f8;
-  background: #182b3c;
+  color: #246bfd;
+  background: #eef4ff;
 }
 .diagnostics-policy.reject {
-  color: #ff9b99;
-  background: #331e22;
+  color: #b42332;
+  background: #fff0f2;
 }
 .diagnostics-policy.unknown {
-  color: #efc57b;
-  background: #332a16;
+  color: #895c12;
+  background: #fff6df;
 }
-.diagnostics-row-details { margin-top: 7px; color: var(--muted); font-size: 11px; }
+.diagnostics-row-details { margin-top: 7px; color: var(--muted); font-size: 12px; }
 .diagnostics-row-details > summary { cursor: pointer; }
 .diagnostics-help { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 16px; color: var(--muted); font-size: 12px; }
 .diagnostics-help > summary { display: flex; width: fit-content; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
@@ -167,3 +167,8 @@
     min-width: 520px;
   }
 }
+
+.diagnostics-panel { padding: 26px; background: white; border: 1px solid var(--line); border-radius: 10px; }
+.diagnostics-table { font-size: 14px; }
+.diagnostics-examples { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+@media(max-width:600px) { .diagnostics-panel { padding: 20px 15px; } }

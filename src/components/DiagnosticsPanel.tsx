@@ -78,6 +78,10 @@ export default function DiagnosticsPanel({ profile }: { profile: Profile }) {
           域名、IP 或“域名,解析IP,CN”。英文逗号，地区按手动提示处理。
         </p>
       </div>
+      <div className="diagnostics-examples">
+        <button className="text-button accent" onClick={() => setInput(profile.apps.flatMap(app => app.domains.slice(0,1)).join("\n"))}>填入当前应用</button>
+        <button className="text-button" onClick={() => setInput("www.kugou.com\nyoutube.com\n192.168.1.20\n8.8.8.8,US")}>填入域名与 IP 示例</button>
+      </div>
       <div className="diagnostics-actions">
         <button type="button" className="button primary" onClick={check}>
           <ScanLine size={17} />
@@ -180,6 +184,7 @@ export default function DiagnosticsPanel({ profile }: { profile: Profile }) {
                       >
                         {policyLabels[result.policy]}
                       </span>
+                      {result.nodeName && <strong className="diagnostics-node">{result.nodeName}</strong>}
                       <small>{DIAGNOSTIC_STATUS_LABELS[result.status]}</small>
                     </td>
                     <td>
