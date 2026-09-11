@@ -1,0 +1,44 @@
+{
+  "version": "0.7.0",
+  "checkedAt": "2026-09-11T11:37:50.863Z",
+  "workerVersion": "026b010a-da63-4bda-bf59-c67d361450dc",
+  "browser": "Chrome 152.0.7977.65",
+  "productionUrl": "https://routekit.menghuaban520.workers.dev/?view=network&tool=websites",
+  "assets": [
+    {
+      "path": "/?view=network&tool=websites",
+      "matches_build": true,
+      "bytes": 742,
+      "sha256": "ed6e05e885f822b93af6c866238133fef93291dac770a1fd4d909da6cdf158dd"
+    },
+    {
+      "path": "/assets/index-9-FPY7a8.css",
+      "matches_build": true,
+      "bytes": 99888,
+      "sha256": "d5fa6081c4f833cc508332ff0d18751524be81df558afc0ee62848c202b2c847"
+    },
+    {
+      "path": "/assets/index-D-7xOyl2.js",
+      "matches_build": true,
+      "bytes": 534277,
+      "sha256": "1dafc519a7640a96adf8da73c411d73c8864efb03cad292e097924cd8cd9cce9"
+    }
+  ],
+  "checks": {
+    "typescript_and_build": true,
+    "unit_tests_353": true,
+    "affected_browser_tests_24": true,
+    "production_12_website_probe_jobs_completed": true,
+    "production_no_page_errors": true,
+    "production_mobile_375_no_overflow": true,
+    "final_mobile_first_card_before_800px": true,
+    "final_production_assets_match_build": true
+  },
+  "limitations": [
+    "Public-site probes included failures and partial responses; these are current-environment observations, not service-wide availability judgments.",
+    "No login, media unlocking, per-site exit IP, client activation or Xray runtime is verified by this check.",
+    "Affected browser regressions use deterministic transport fixtures; production probes use real public requests."
+  ],
+  "productionMeasurementWorkerVersion": "cc4f1e3f-a36a-4af4-841f-c21c042c10aa",
+  "finalVisualCheckedAt": "2026-09-11T11:43:52.661Z"
+}

@@ -1,11 +1,11 @@
 export type Workspace = "network" | "nodes" | "config" | "diagnostics";
-export type NetworkSection = "overview" | "speed" | "host" | "leaks";
+export type NetworkSection = "overview" | "websites" | "speed" | "host" | "leaks";
 export type SubscriptionSection = "import" | "usage" | "library" | "probe" | "live";
 export type ConfigTab = "apps" | "basic" | "dns" | "advanced" | "chain";
 export type NavigationTarget = { view: Workspace; tool: string };
 
 const sections: Record<Workspace, readonly string[]> = {
-  network: ["overview", "speed", "host", "leaks"],
+  network: ["overview", "websites", "speed", "host", "leaks"],
   nodes: ["import", "usage", "library", "probe", "live"],
   config: ["apps", "basic", "dns", "chain", "advanced"],
   diagnostics: ["rules"],

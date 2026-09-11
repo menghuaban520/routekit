@@ -8,6 +8,8 @@ React + TypeScript + Vite，搭配一个只返回当前请求 IP 信息的 Cloud
 
 ![RouteKit 桌面界面](docs/preview.png)
 
+新增[网站连通](https://routekit.menghuaban520.workers.dev/?view=network&tool=websites)：Google、YouTube、ChatGPT、GitHub 等 12 站，切换节点前后对比，展开查看配置预期与排查入口。[检测方式与竞品研究](docs/website-checks.md)。
+
 ## 第一次使用
 
 1. **导入节点。** 在“订阅与节点”填写服务商提供的 HTTPS 订阅地址；若浏览器无法读取，改为粘贴节点内容或导入 `.txt`、`.yaml` / `.yml`。Clash YAML 只读取节点，不迁移原分流规则。订阅链接是私人凭证，不要发送给公共转换站。
@@ -56,7 +58,7 @@ Shadowsocks 是协议，Shadowrocket、Clash 系客户端与 v2rayN 是不同客
 
 配置编辑、订阅解析和文件生成在浏览器内完成，无账号或统计脚本。RouteKit 后端不接收订阅 URL、节点密码或配置。订阅读取直接请求你指定的 HTTPS 服务；不允许 CORS 时使用粘贴或文件导入，不经公共转换服务。用量来自服务商快照，缺失字段显示未知；网页不能改动套餐额度，也不把实时上下行累计当成服务商账单。
 
-查看 IP 请求本网站的 Cloudflare API；延迟与下载请求 Cloudflare Speed。主机查询仅把你填写的公网域名或 IP 交给 Cloudflare 公共 DNS，不请求该目标主机。外部服务会看到访问它们的 IP。不同目标可能匹配不同分流规则，IP 结果不能代表所有应用的出口；IP 地理信息是粗略估计，ASN 不能单独证明住宅属性或信誉。
+查看 IP 请求本网站的 Cloudflare API；延迟与下载请求 Cloudflare Speed。网站连通由浏览器直接访问所选站点的固定公共资源，每站三次，可停止、排序、记为对照和导出报告；“收到响应”不等于登录、播放或地区解锁。主机查询仅把你填写的公网域名或 IP 交给 Cloudflare 公共 DNS，不请求该目标主机。外部服务会看到访问它们的 IP。不同目标可能匹配不同分流规则，IP 结果不能代表所有应用的出口；IP 地理信息是粗略估计，ASN 不能单独证明住宅属性或信誉。
 
 下载测速每次最多接收 5 MB 样本，完整接收才生成平均值；可停止，没有自动后台测速。经代理的检测会消耗套餐流量。DNS 加密配置、解析成功或打开外部检查页都不等于“没有泄漏”；按页面说明在同一个目标设备、浏览器与节点下对照结果。
 

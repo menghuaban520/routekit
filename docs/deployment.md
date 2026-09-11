@@ -60,7 +60,7 @@ Pages 使用这些构建设置；`wrangler.jsonc` 是 Workers 部署配置，不
 
 ## 响应头与发布验收
 
-`public/_headers` 设置了内容安全策略、防嵌入、防 MIME 嗅探及无来源引用头。脚本只从同源加载；`connect-src 'self' https: http://127.0.0.1:8766` 允许同源、HTTPS 订阅/检测服务和固定的本机监测器端口。CSP 本身并未把 HTTPS 限定到几个服务商。应用会按用户操作请求自己的 IP 接口、用户指定的订阅源、Cloudflare Speed、Cloudflare 公共 DoH 或本地监测器；本站不提供订阅转发或任意 URL 代理。内联 SVG 图标不受影响。
+`public/_headers` 设置了内容安全策略、防嵌入、防 MIME 嗅探及无来源引用头。脚本只从同源加载；`connect-src 'self' https: http://127.0.0.1:8766` 允许同源、HTTPS 订阅/检测服务和固定的本机监测器端口。CSP 本身并未把 HTTPS 限定到几个服务商。应用会按用户操作请求自己的 IP 接口、用户指定的订阅源、Cloudflare Speed、Cloudflare 公共 DoH、固定网站检测目标或本地监测器；本站不提供订阅转发或任意 URL 代理。内联 SVG 图标不受影响。
 
 跨域能否读取订阅及其用量头仍由目标站点的 CORS 控制。读取 `Subscription-Userinfo` 还需服务商使用 `Access-Control-Expose-Headers` 暴露该头；订阅下载成功不代表浏览器能读到用量，缺失时不能当作零额度。[MDN 响应头暴露说明](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Access-Control-Expose-Headers)
 

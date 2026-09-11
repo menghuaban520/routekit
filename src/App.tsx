@@ -66,6 +66,7 @@ import { navigationUrl, normalizeNavigation, readNavigation, type Workspace, typ
 const navigationGroups = [
   { id: "network", label: "网络检查", icon: Globe2, items: [
     { view: "network", tool: "overview", label: "网络概览", icon: Globe2, description: "检查当前出口、延迟与连通性。" },
+    { view: "network", tool: "websites", label: "网站连通", icon: Link2, description: "逐站检查常用网站，比较切换线路前后的表现。" },
     { view: "network", tool: "speed", label: "速度测试", icon: ArrowDown, description: "看实际下载速度、采样曲线和本次消耗。" },
     { view: "network", tool: "host", label: "主机查询", icon: Search, description: "查询域名解析、记录类型和 DNS 响应。" },
     { view: "network", tool: "leaks", label: "泄漏检查", icon: ShieldCheck, description: "按步骤核对 DNS、WebRTC 和 IPv6 出口。" },
@@ -666,7 +667,7 @@ export default function App() {
         </div>
       </header>
       <main className="page" id="workspace">
-        <section className="intro">
+        <section className={`intro ${activeView === "network" && networkSection === "websites" ? "website-page-intro" : ""}`}>
           <div>
             <h1>{activeView === "config" ? currentWorkspace.title : currentPage?.label ?? currentWorkspace.title}</h1>
             <p>{currentPage?.description ?? currentWorkspace.description}</p>
@@ -690,7 +691,7 @@ export default function App() {
           )}
         </section>
         <div hidden={activeView !== "network"}>
-          <NetworkPanel active={activeView === "network"} section={networkSection} onSectionChange={section => changeWorkspace("network", section)} />
+          <NetworkPanel profile={profile} onEditRouting={() => changeWorkspace("config", "apps")} active={activeView === "network"} section={networkSection} onSectionChange={section => changeWorkspace("network", section)} />
         </div>
         <div hidden={activeView !== "nodes"}>
           <SubscriptionsPanel section={subscriptionSection} onSectionChange={section => changeWorkspace("nodes", section)} nodes={nodes} onNodesChange={setNodes} active={activeView === "nodes"} onConfigureNodes={(nodeId) => {
@@ -1648,7 +1649,7 @@ export default function App() {
           <button onClick={() => setModal("guide")}>使用指南</button>
           <span>·</span>
           <span>MIT License</span>
-          <span className="version">v0.6.0</span>
+          <span className="version">v0.7.0</span>
         </div>
       </footer>
       {message && (

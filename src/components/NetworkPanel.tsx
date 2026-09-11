@@ -16,6 +16,9 @@ import {
 import { DNS_RECORD_TYPES, dnsQueryUrl, networkFailure, parseDnsResponse, prepareDnsQuery, type DnsQuery, type DnsRecordType, type DnsResult } from "../core/network-checks";
 import "./toolbox.css";
 import "./network-lab.css";
+import type { Profile } from "../core";
+import type { NetworkSection } from "../core/navigation";
+import WebsiteConnectivityPanel from "./WebsiteConnectivityPanel";
 
 type Connection = {
   source: string;
@@ -32,8 +35,7 @@ type Connection = {
   tlsVersion: string | null;
 };
 type Phase = "connection" | "latency" | "speed";
-export type NetworkSection = "overview" | "speed" | "host" | "leaks";
-type NetworkPanelProps = { section?: NetworkSection; onSectionChange?: (section: NetworkSection) => void; active?: boolean };
+type NetworkPanelProps = { section?: NetworkSection; onSectionChange?: (section: NetworkSection) => void; active?: boolean; profile?: Profile; onEditRouting?: () => void };
 type PhaseResult = { status: "running" | "passed" | "error" | "stopped"; message: string };
 type ThroughputSample = { elapsedMs: number; mbps: number; receivedBytes: number };
 type ProbeEvent = { id: number; at: string; text: string; tone: "data" | "info" | "error"; section: "overview" | "speed" };
@@ -86,7 +88,7 @@ function LatencyChart({ samples }: { samples: number[] }) {
   );
 }
 
-export default function NetworkPanel({ section, onSectionChange, active = true }: NetworkPanelProps = {}) {
+export default function NetworkPanel({ section, onSectionChange, active = true, profile, onEditRouting }: NetworkPanelProps = {}) {
   const [localSection, setLocalSection] = useState<NetworkSection>("overview");
   const view = section ?? localSection;
   function navigate(next: NetworkSection) {
@@ -307,7 +309,7 @@ export default function NetworkPanel({ section, onSectionChange, active = true }
   return (
     <section className="network-lab" data-section={view}>
       {section === undefined && <nav className="lab-view-navigation" aria-label="网络检查工具">
-        {([{ key: "overview", label: "网络概览", icon: Activity }, { key: "speed", label: "速度测试", icon: ArrowDownToLine }, { key: "host", label: "主机查询", icon: Search }, { key: "leaks", label: "泄漏检查", icon: ShieldCheck }] as const).map(({ key, label, icon: Icon }) => <button key={key} aria-current={view === key ? "page" : undefined} aria-controls={`network-${key}`} onClick={() => navigate(key)}><Icon size={18} />{label}</button>)}
+        {([{ key: "overview", label: "网络概览", icon: Activity }, { key: "websites", label: "网站连通", icon: Globe2 }, { key: "speed", label: "速度测试", icon: ArrowDownToLine }, { key: "host", label: "主机查询", icon: Search }, { key: "leaks", label: "泄漏检查", icon: ShieldCheck }] as const).map(({ key, label, icon: Icon }) => <button key={key} aria-current={view === key ? "page" : undefined} aria-controls={`network-${key}`} onClick={() => navigate(key)}><Icon size={18} />{label}</button>)}
       </nav>}
       {measurementView && <>
         <div className="lab-setup"><div><h2>{view === "speed" ? "测一段真实的下载速度" : "当前出口与连通性"}</h2><p>{view === "speed" ? "接收 5 MB 样本，看实时速度与曲线。先连接要测试的节点，再开始。" : "查看网站看到的 IP，并用 3 次 HTTPS 请求检查当前连接。测试节点前，请先在小火箭中连接它。"}</p></div></div>
@@ -317,6 +319,9 @@ export default function NetworkPanel({ section, onSectionChange, active = true }
           <div className={`lab-phase ${busy ? "is-running" : ""}`} data-testid="network-phase" data-phase={busy || "idle"} role="status"><i />{busy ? PHASE_NAMES[busy] : view === "speed" ? speedStatus : connectionStatus}</div>
         </div>
       </>}
+      <div id="network-websites" hidden={view !== "websites"}>
+        <WebsiteConnectivityPanel active={active && view === "websites"} profile={profile} onEditRouting={onEditRouting} />
+      </div>
       <div id="network-overview" hidden={view !== "overview"}>
       <div className="lab-identity">
         <div className="lab-ip-block"><span className="lab-label"><Globe2 size={14} />本站观测 IP <span className="lab-target">→ 当前网站</span></span><strong className={`lab-ip ${connection?.ip ? "has-data" : ""}`}>{connection?.ip ?? "—"}</strong><div className="lab-ip-meta"><span>{connection?.ipVersion ?? "IP"}</span><span>{ipAt ? `${ipAt} 快照` : "等待查询"}</span><button className="lab-copy-ip" aria-label={ipCopied ? "IP 已复制" : "复制当前 IP"} disabled={!connection?.ip} onClick={() => { if (connection?.ip) void navigator.clipboard.writeText(connection.ip).then(() => setIpCopied(true)).catch(() => record("无法访问剪贴板，可选中 IP 手动复制", "error")); }}>{ipCopied ? <Check size={12} /> : <Copy size={12} />}{ipCopied ? "已复制" : "复制"}</button></div></div>
@@ -342,7 +347,7 @@ export default function NetworkPanel({ section, onSectionChange, active = true }
             <p className="lab-result-note">IP 与延迟目标可能走不同分流规则；这里的耗时不是 ICMP Ping，也无法定位到某个路由跳点。</p>
           </section>
         </div>
-        <div className="lab-next-actions" aria-label="继续检查"><button onClick={() => navigate("speed")}><ArrowDownToLine size={18} /><span><strong>继续测下载速度</strong><small>单独接收 5 MB 样本</small></span><ArrowUpRight size={16} /></button><button onClick={() => navigate("host")}><Search size={18} /><span><strong>查一个域名或 IP</strong><small>公共 DNS 记录与 TTL</small></span><ArrowUpRight size={16} /></button><button onClick={() => navigate("leaks")}><ShieldCheck size={18} /><span><strong>检查 DNS / IP 泄漏</strong><small>对照出口与解析路径</small></span><ArrowUpRight size={16} /></button></div>
+        <div className="lab-next-actions" aria-label="继续检查"><button onClick={() => navigate("websites")}><Globe2 size={18} /><span><strong>检查主要网站连通</strong><small>Google、YouTube、ChatGPT 等</small></span><ArrowUpRight size={16} /></button><button onClick={() => navigate("speed")}><ArrowDownToLine size={18} /><span><strong>继续测下载速度</strong><small>单独接收 5 MB 样本</small></span><ArrowUpRight size={16} /></button><button onClick={() => navigate("host")}><Search size={18} /><span><strong>查一个域名或 IP</strong><small>公共 DNS 记录与 TTL</small></span><ArrowUpRight size={16} /></button><button onClick={() => navigate("leaks")}><ShieldCheck size={18} /><span><strong>检查 DNS / IP 泄漏</strong><small>对照出口与解析路径</small></span><ArrowUpRight size={16} /></button></div>
         {eventList("overview")}
         <details className="lab-methods"><summary><Info size={14} />结果怎么理解</summary><div><p>本站 IP 是访问本网站时的出口快照，延迟请求发往 Cloudflare Speed；它们可能匹配不同分流规则。IP 没变化时，先检查本站是否设置为直连；延迟高或波动明显时，换节点再用同样方式对比。</p><p>地区和 ASN 是粗略网络信息，不能单独证明住宅、机房或 IP 信誉。“开始检测”只查询 IP 与 3 次 HTTPS 请求，不执行 5 MB 下载。对订阅里的各个节点逐个检测，请使用“订阅与节点”的本地检测器。</p></div></details>
       </div>
